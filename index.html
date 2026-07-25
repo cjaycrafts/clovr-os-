@@ -128,6 +128,30 @@
     outline-offset: 1px;
   }
 
+  .password-row {
+    position: relative;
+    margin-bottom: 14px;
+  }
+
+  .password-row input[type="password"],
+  .password-row input[type="text"] {
+    margin-bottom: 0;
+    padding-right: 48px;
+  }
+
+  .toggle-pass {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 6px 8px;
+  }
+
   .remember-row {
     display: flex;
     align-items: center;
@@ -500,6 +524,132 @@
   .import-summary .accepted { color: var(--clover); font-weight: 600; }
   .import-summary .rejected { color: var(--danger); font-weight: 600; }
 
+  .tab-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px 0;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 10px;
+    border-radius: 10px 10px 0 0;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    background: var(--surface);
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .tab-btn.active {
+    background: var(--surface-2);
+    color: var(--terracotta);
+  }
+
+  #overviewView.hidden, #leadsView.hidden { display: none; }
+
+  .leads-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  .leads-toolbar select {
+    flex: 1;
+    min-width: 140px;
+    padding: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .leads-toolbar .danger-btn {
+    background: var(--danger);
+    color: #14120F;
+    border: none;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .lead-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+
+  .lead-row .lr-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .lead-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--danger);
+    flex-shrink: 0;
+  }
+
+  .lead-row .lr-field {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid transparent;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 3px 0;
+  }
+
+  .lead-row .lr-field:focus {
+    outline: none;
+    border-bottom-color: var(--terracotta);
+  }
+
+  .lead-row .lr-field.lr-name { font-weight: 600; font-family: var(--font-body); font-size: 13px; }
+
+  .lead-row .lr-flags {
+    display: flex;
+    gap: 14px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .lead-row .lr-flags label { display: flex; align-items: center; gap: 5px; }
+  .lead-row .lr-flags input[type="checkbox"] { accent-color: var(--clover); }
+
+  .pagination-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .pagination-row button {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .pagination-row button:disabled { opacity: 0.4; }
+
   .toast {
     position: fixed;
     top: 16px;
@@ -530,7 +680,10 @@
       </div>
       <h1>CLOVR Outreach</h1>
       <p>Enter your dashboard password once</p>
-      <input type="password" id="passwordInput" placeholder="Password" autocomplete="off">
+      <div class="password-row">
+        <input type="password" id="passwordInput" placeholder="Password" autocomplete="off">
+        <button type="button" class="toggle-pass" id="togglePass">Show</button>
+      </div>
       <div class="remember-row">
         <input type="checkbox" id="rememberCheck" checked>
         <label for="rememberCheck">Remember on this device — don't ask again</label>
@@ -559,7 +712,12 @@
       </div>
     </header>
 
-    <main>
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tabOverviewBtn">Overview</button>
+      <button class="tab-btn" id="tabLeadsBtn">Leads</button>
+    </div>
+
+    <main id="overviewView">
       <div class="import-card">
         <label class="file-input-label" id="fileLabel" for="fileInput">Tap to choose a CSV or Excel file</label>
         <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
@@ -593,6 +751,22 @@
       <div id="accountList"></div>
 
       <div class="refresh-note" id="lastUpdated">—</div>
+    </main>
+
+    <main id="leadsView" class="hidden">
+      <div class="leads-toolbar">
+        <select id="leadsAccountSelect"></select>
+        <button class="danger-btn" id="resetWeekBtn">Reset week</button>
+      </div>
+      <div class="leads-toolbar">
+        <button class="mini-btn" id="deleteSelectedBtn" style="flex:1;">Delete selected</button>
+      </div>
+      <div id="leadsList">Loading…</div>
+      <div class="pagination-row">
+        <button id="prevPageBtn">← Prev</button>
+        <span id="pageInfo">Page 1</span>
+        <button id="nextPageBtn">Next →</button>
+      </div>
     </main>
 
     <div class="action-bar">
@@ -629,6 +803,12 @@
     const authGate   = document.getElementById('authGate');
     const app        = document.getElementById('app');
     const passInput  = document.getElementById('passwordInput');
+    const togglePass = document.getElementById('togglePass');
+    togglePass.addEventListener('click', () => {
+      const isHidden = passInput.type === 'password';
+      passInput.type = isHidden ? 'text' : 'password';
+      togglePass.textContent = isHidden ? 'Hide' : 'Show';
+    });
     const rememberCk = document.getElementById('rememberCheck');
     const unlockBtn  = document.getElementById('unlockBtn');
     const authError  = document.getElementById('authError');
@@ -796,6 +976,154 @@
 
       importBtn.textContent = 'Import';
       importBtn.disabled = false;
+    });
+
+    // ================================================
+    // Tab switching
+    // ================================================
+    const tabOverviewBtn = document.getElementById('tabOverviewBtn');
+    const tabLeadsBtn    = document.getElementById('tabLeadsBtn');
+    const overviewView   = document.getElementById('overviewView');
+    const leadsView      = document.getElementById('leadsView');
+
+    tabOverviewBtn.addEventListener('click', () => {
+      tabOverviewBtn.classList.add('active');
+      tabLeadsBtn.classList.remove('active');
+      overviewView.classList.remove('hidden');
+      leadsView.classList.add('hidden');
+    });
+
+    tabLeadsBtn.addEventListener('click', () => {
+      tabLeadsBtn.classList.add('active');
+      tabOverviewBtn.classList.remove('active');
+      leadsView.classList.remove('hidden');
+      overviewView.classList.add('hidden');
+      if (!leadsBooted) bootLeadsView();
+    });
+
+    // ================================================
+    // Leads spreadsheet view
+    // ================================================
+    let leadsBooted = false;
+    let currentPage = 1;
+    const PAGE_SIZE = 25;
+
+    function bootLeadsView() {
+      leadsBooted = true;
+      const select = document.getElementById('leadsAccountSelect');
+      select.innerHTML = ACCOUNTS.map((a, i) => `<option value="${i}">${a.label}</option>`).join('');
+      select.addEventListener('change', () => { currentPage = 1; loadLeads(); });
+      loadLeads();
+    }
+
+    function currentAccount() {
+      const idx = parseInt(document.getElementById('leadsAccountSelect').value || '0');
+      return ACCOUNTS[idx];
+    }
+
+    async function loadLeads() {
+      const listEl = document.getElementById('leadsList');
+      listEl.textContent = 'Loading…';
+      try {
+        const account = currentAccount();
+        const params = new URLSearchParams({ action: 'leads', token: TOKEN, page: currentPage, pageSize: PAGE_SIZE });
+        const res = await fetch(`${account.url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        renderLeads(data);
+      } catch (e) {
+        listEl.textContent = 'Could not load leads: ' + e.message;
+      }
+    }
+
+    function renderLeads(data) {
+      const listEl = document.getElementById('leadsList');
+      listEl.innerHTML = '';
+
+      if (!data.leads.length) {
+        listEl.textContent = 'No leads on this page.';
+      }
+
+      data.leads.forEach((lead) => {
+        const row = document.createElement('div');
+        row.className = 'lead-row';
+        row.innerHTML = `
+          <div class="lr-top">
+            <input type="checkbox" class="del-check" data-row="${lead.row}">
+            <input class="lr-field lr-name" data-field="name" value="${escapeAttr(lead.name)}">
+          </div>
+          <input class="lr-field" data-field="email" value="${escapeAttr(lead.email)}">
+          <input class="lr-field" data-field="storeName" value="${escapeAttr(lead.storeName)}">
+          <div class="lr-flags">
+            <label><input type="checkbox" data-field="replied" ${lead.replied ? 'checked' : ''}> Replied</label>
+            <label><input type="checkbox" data-field="bounced" ${lead.bounced ? 'checked' : ''}> Bounced</label>
+          </div>
+        `;
+
+        row.querySelectorAll('[data-field]').forEach((el) => {
+          const eventName = el.type === 'checkbox' ? 'change' : 'blur';
+          el.addEventListener(eventName, async () => {
+            const field = el.dataset.field;
+            const value = el.type === 'checkbox' ? el.checked : el.value;
+            try {
+              await callApiForPost(currentAccount(), 'updateLead', { row: lead.row, field, value });
+              showToast('Saved');
+            } catch (err) {
+              showToast('Save failed: ' + err.message);
+            }
+          });
+        });
+
+        listEl.appendChild(row);
+      });
+
+      document.getElementById('pageInfo').textContent = `Page ${data.page} of ${data.totalPages || 1} (${data.totalLeads} leads)`;
+      document.getElementById('prevPageBtn').disabled = data.page <= 1;
+      document.getElementById('nextPageBtn').disabled = data.page >= data.totalPages;
+    }
+
+    function escapeAttr(str) {
+      return (str || '').toString().replace(/"/g, '&quot;');
+    }
+
+    async function callApiForPost(account, action, extra) {
+      const res = await fetch(account.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ token: TOKEN, action, ...extra })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      return data;
+    }
+
+    document.getElementById('prevPageBtn').addEventListener('click', () => { currentPage--; loadLeads(); });
+    document.getElementById('nextPageBtn').addEventListener('click', () => { currentPage++; loadLeads(); });
+
+    document.getElementById('deleteSelectedBtn').addEventListener('click', async () => {
+      const rows = Array.from(document.querySelectorAll('.del-check:checked')).map(cb => cb.dataset.row);
+      if (!rows.length) { showToast('Nothing selected'); return; }
+      if (!confirm(`Delete ${rows.length} lead(s)? This can't be undone.`)) return;
+      try {
+        await callApiForPost(currentAccount(), 'deleteLeads', { rows });
+        showToast(`${rows.length} lead(s) deleted`);
+        loadLeads();
+      } catch (e) {
+        showToast('Delete failed: ' + e.message);
+      }
+    });
+
+    document.getElementById('resetWeekBtn').addEventListener('click', async () => {
+      if (!confirm('This deletes ALL leads on this account, keeping only the header row. Are you sure?')) return;
+      if (!confirm('Really sure? This cannot be undone.')) return;
+      try {
+        await callApiForPost(currentAccount(), 'resetAllLeads', {});
+        showToast('Account leads reset');
+        currentPage = 1;
+        loadLeads();
+      } catch (e) {
+        showToast('Reset failed: ' + e.message);
+      }
     });
 
     // ================================================
