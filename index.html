@@ -676,6 +676,10 @@
     accent-color: var(--danger);
   }
 
+  .readonly-check {
+    pointer-events: none;
+  }
+
   .account-tabs {
     display: flex;
     overflow-x: auto;
@@ -1153,8 +1157,8 @@
           <td><input type="text" data-field="name" value="${escapeAttr(lead.name)}"></td>
           <td><input type="text" data-field="email" value="${escapeAttr(lead.email)}"></td>
           <td><input type="text" data-field="storeName" value="${escapeAttr(lead.storeName)}"></td>
-          <td class="checkbox-cell"><input type="checkbox" disabled ${lead.replied ? 'checked' : ''}></td>
-          <td class="checkbox-cell"><input type="checkbox" disabled ${lead.bounced ? 'checked' : ''}></td>
+          <td class="checkbox-cell"><input type="checkbox" class="readonly-check" ${lead.replied ? 'checked' : ''}></td>
+          <td class="checkbox-cell"><input type="checkbox" class="readonly-check" ${lead.bounced ? 'checked' : ''}></td>
         `;
 
         tr.querySelectorAll('[data-field]').forEach((el) => {
