@@ -580,56 +580,97 @@
     font-weight: 600;
   }
 
-  .lead-row {
-    background: var(--surface);
+  .sheet-wrap {
+    overflow-x: auto;
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 10px 12px;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
 
-  .lead-row .lr-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .lead-row input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--danger);
-    flex-shrink: 0;
-  }
-
-  .lead-row .lr-field {
+  table.sheet {
+    border-collapse: collapse;
     width: 100%;
+    min-width: 640px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  table.sheet thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    color: var(--text-dim);
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  table.sheet td {
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  table.sheet td input[type="text"] {
+    width: 100%;
+    min-width: 110px;
     background: transparent;
     border: none;
-    border-bottom: 1px solid transparent;
     color: var(--text);
     font-family: var(--font-mono);
     font-size: 12px;
-    padding: 3px 0;
+    padding: 8px 10px;
   }
 
-  .lead-row .lr-field:focus {
-    outline: none;
-    border-bottom-color: var(--terracotta);
+  table.sheet td input[type="text"]:focus {
+    outline: 2px solid var(--terracotta);
+    outline-offset: -2px;
+    background: var(--surface-2);
   }
 
-  .lead-row .lr-field.lr-name { font-weight: 600; font-family: var(--font-body); font-size: 13px; }
+  table.sheet td.checkbox-cell {
+    text-align: center;
+    padding: 8px;
+  }
 
-  .lead-row .lr-flags {
+  table.sheet td input[type="checkbox"] {
+    accent-color: var(--clover);
+  }
+
+  table.sheet td.del-cell input[type="checkbox"] {
+    accent-color: var(--danger);
+  }
+
+  .account-tabs {
     display: flex;
-    gap: 14px;
-    margin-top: 6px;
-    font-size: 11px;
-    color: var(--text-dim);
+    overflow-x: auto;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    margin: 0 -20px 16px;
+    padding: 0 20px;
   }
 
-  .lead-row .lr-flags label { display: flex; align-items: center; gap: 5px; }
-  .lead-row .lr-flags input[type="checkbox"] { accent-color: var(--clover); }
+  .account-tab-btn {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .account-tab-btn.active {
+    background: var(--surface-2);
+    color: var(--terracotta);
+  }
 
   .pagination-row {
     display: flex;
@@ -649,6 +690,7 @@
     font-size: 12px;
   }
   .pagination-row button:disabled { opacity: 0.4; }
+
 
   .toast {
     position: fixed;
@@ -755,18 +797,36 @@
 
     <main id="leadsView" class="hidden">
       <div class="leads-toolbar">
-        <select id="leadsAccountSelect"></select>
-        <button class="danger-btn" id="resetWeekBtn">Reset week</button>
-      </div>
-      <div class="leads-toolbar">
+        <button class="danger-btn" id="resetWeekBtn">Reset week (current account)</button>
         <button class="mini-btn" id="deleteSelectedBtn" style="flex:1;">Delete selected</button>
       </div>
-      <div id="leadsList">Loading…</div>
+
+      <div class="sheet-wrap">
+        <table class="sheet">
+          <thead>
+            <tr>
+              <th>Del</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Store Name</th>
+              <th>Replied</th>
+              <th>Bounced</th>
+            </tr>
+          </thead>
+          <tbody id="leadsTableBody">
+            <tr><td colspan="6" style="padding:16px;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <div class="pagination-row">
         <button id="prevPageBtn">← Prev</button>
         <span id="pageInfo">Page 1</span>
         <button id="nextPageBtn">Next →</button>
       </div>
+
+      <!-- Account tabs live at the bottom, like Excel sheet tabs -->
+      <div class="account-tabs" id="accountTabs"></div>
     </main>
 
     <div class="action-bar">
@@ -1005,25 +1065,37 @@
     // Leads spreadsheet view
     // ================================================
     let leadsBooted = false;
+    let currentAccountIndex = 0;
     let currentPage = 1;
     const PAGE_SIZE = 25;
 
     function bootLeadsView() {
       leadsBooted = true;
-      const select = document.getElementById('leadsAccountSelect');
-      select.innerHTML = ACCOUNTS.map((a, i) => `<option value="${i}">${a.label}</option>`).join('');
-      select.addEventListener('change', () => { currentPage = 1; loadLeads(); });
+      const tabsEl = document.getElementById('accountTabs');
+      tabsEl.innerHTML = ACCOUNTS.map((a, i) =>
+        `<button class="account-tab-btn${i === 0 ? ' active' : ''}" data-idx="${i}">${a.label}</button>`
+      ).join('');
+
+      tabsEl.querySelectorAll('.account-tab-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          tabsEl.querySelectorAll('.account-tab-btn').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentAccountIndex = parseInt(btn.dataset.idx);
+          currentPage = 1;
+          loadLeads();
+        });
+      });
+
       loadLeads();
     }
 
     function currentAccount() {
-      const idx = parseInt(document.getElementById('leadsAccountSelect').value || '0');
-      return ACCOUNTS[idx];
+      return ACCOUNTS[currentAccountIndex];
     }
 
     async function loadLeads() {
-      const listEl = document.getElementById('leadsList');
-      listEl.textContent = 'Loading…';
+      const body = document.getElementById('leadsTableBody');
+      body.innerHTML = `<tr><td colspan="6" style="padding:16px;">Loading…</td></tr>`;
       try {
         const account = currentAccount();
         const params = new URLSearchParams({ action: 'leads', token: TOKEN, page: currentPage, pageSize: PAGE_SIZE });
@@ -1032,35 +1104,30 @@
         if (data.error) throw new Error(data.error);
         renderLeads(data);
       } catch (e) {
-        listEl.textContent = 'Could not load leads: ' + e.message;
+        body.innerHTML = `<tr><td colspan="6" style="padding:16px;">Could not load leads: ${e.message}</td></tr>`;
       }
     }
 
     function renderLeads(data) {
-      const listEl = document.getElementById('leadsList');
-      listEl.innerHTML = '';
+      const body = document.getElementById('leadsTableBody');
+      body.innerHTML = '';
 
       if (!data.leads.length) {
-        listEl.textContent = 'No leads on this page.';
+        body.innerHTML = `<tr><td colspan="6" style="padding:16px;">No leads on this page.</td></tr>`;
       }
 
       data.leads.forEach((lead) => {
-        const row = document.createElement('div');
-        row.className = 'lead-row';
-        row.innerHTML = `
-          <div class="lr-top">
-            <input type="checkbox" class="del-check" data-row="${lead.row}">
-            <input class="lr-field lr-name" data-field="name" value="${escapeAttr(lead.name)}">
-          </div>
-          <input class="lr-field" data-field="email" value="${escapeAttr(lead.email)}">
-          <input class="lr-field" data-field="storeName" value="${escapeAttr(lead.storeName)}">
-          <div class="lr-flags">
-            <label><input type="checkbox" data-field="replied" ${lead.replied ? 'checked' : ''}> Replied</label>
-            <label><input type="checkbox" data-field="bounced" ${lead.bounced ? 'checked' : ''}> Bounced</label>
-          </div>
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="checkbox-cell del-cell"><input type="checkbox" class="del-check" data-row="${lead.row}"></td>
+          <td><input type="text" data-field="name" value="${escapeAttr(lead.name)}"></td>
+          <td><input type="text" data-field="email" value="${escapeAttr(lead.email)}"></td>
+          <td><input type="text" data-field="storeName" value="${escapeAttr(lead.storeName)}"></td>
+          <td class="checkbox-cell"><input type="checkbox" data-field="replied" ${lead.replied ? 'checked' : ''}></td>
+          <td class="checkbox-cell"><input type="checkbox" data-field="bounced" ${lead.bounced ? 'checked' : ''}></td>
         `;
 
-        row.querySelectorAll('[data-field]').forEach((el) => {
+        tr.querySelectorAll('[data-field]').forEach((el) => {
           const eventName = el.type === 'checkbox' ? 'change' : 'blur';
           el.addEventListener(eventName, async () => {
             const field = el.dataset.field;
@@ -1074,7 +1141,7 @@
           });
         });
 
-        listEl.appendChild(row);
+        body.appendChild(tr);
       });
 
       document.getElementById('pageInfo').textContent = `Page ${data.page} of ${data.totalPages || 1} (${data.totalLeads} leads)`;
