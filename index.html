@@ -26,6 +26,19 @@
     --font-mono: 'IBM Plex Mono', 'SF Mono', monospace;
   }
 
+  body.light {
+    --bg:        #FBF7F0;
+    --surface:   #FFFFFF;
+    --surface-2: #F1E9DD;
+    --border:    #E1D5C0;
+    --text:      #2A241D;
+    --text-dim:  #7A6F60;
+    --terracotta:#B85A2A;
+    --clover:    #4F7357;
+    --amber:     #B5842E;
+    --danger:    #A54B3B;
+  }
+
   * { box-sizing: border-box; }
 
   html, body {
@@ -268,6 +281,10 @@
     max-width: 480px;
     margin: 0 auto;
     width: 100%;
+  }
+
+  #leadsView {
+    max-width: 100%;
   }
 
   /* Signature gauge */
@@ -581,7 +598,8 @@
   }
 
   .sheet-wrap {
-    overflow-x: auto;
+    overflow: auto;
+    max-height: 68vh;
     border: 1px solid var(--border);
     border-radius: 10px;
     margin-bottom: 10px;
@@ -590,9 +608,9 @@
   table.sheet {
     border-collapse: collapse;
     width: 100%;
-    min-width: 640px;
+    min-width: 760px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   table.sheet thead th {
@@ -601,12 +619,25 @@
     background: var(--surface-2);
     color: var(--text-dim);
     text-align: left;
-    padding: 8px 10px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border);
     border-right: 1px solid var(--border);
     white-space: nowrap;
     font-weight: 600;
+    z-index: 2;
   }
+
+  table.sheet th.row-num-col, table.sheet td.row-num-cell {
+    position: sticky;
+    left: 0;
+    background: var(--surface-2);
+    z-index: 1;
+    text-align: center;
+    color: var(--text-dim);
+    min-width: 44px;
+  }
+
+  table.sheet th.row-num-col { z-index: 3; }
 
   table.sheet td {
     padding: 0;
@@ -617,13 +648,13 @@
 
   table.sheet td input[type="text"] {
     width: 100%;
-    min-width: 110px;
+    min-width: 140px;
     background: transparent;
     border: none;
     color: var(--text);
     font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 8px 10px;
+    font-size: 13px;
+    padding: 12px 12px;
   }
 
   table.sheet td input[type="text"]:focus {
@@ -748,9 +779,12 @@
           <div id="accountLabel">11 accounts</div>
         </div>
       </div>
-      <div class="status-pill running" id="statusPill">
-        <div class="dot"></div>
-        <span id="statusText">Fleet</span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button class="status-pill" id="themeToggleBtn" style="cursor:pointer;">🌙 Dark</button>
+        <div class="status-pill running" id="statusPill">
+          <div class="dot"></div>
+          <span id="statusText">Fleet</span>
+        </div>
       </div>
     </header>
 
@@ -797,7 +831,7 @@
 
     <main id="leadsView" class="hidden">
       <div class="leads-toolbar">
-        <button class="danger-btn" id="resetWeekBtn">Reset week (current account)</button>
+        <button class="danger-btn" id="resetWeekBtn">Hard reset (clears leads, keeps lifetime stats)</button>
         <button class="mini-btn" id="deleteSelectedBtn" style="flex:1;">Delete selected</button>
       </div>
 
@@ -805,6 +839,7 @@
         <table class="sheet">
           <thead>
             <tr>
+              <th class="row-num-col">#</th>
               <th>Del</th>
               <th>Name</th>
               <th>Email</th>
@@ -814,16 +849,12 @@
             </tr>
           </thead>
           <tbody id="leadsTableBody">
-            <tr><td colspan="6" style="padding:16px;">Loading…</td></tr>
+            <tr><td colspan="7" style="padding:16px;">Loading…</td></tr>
           </tbody>
         </table>
       </div>
 
-      <div class="pagination-row">
-        <button id="prevPageBtn">← Prev</button>
-        <span id="pageInfo">Page 1</span>
-        <button id="nextPageBtn">Next →</button>
-      </div>
+      <div class="refresh-note" id="leadsCountNote"></div>
 
       <!-- Account tabs live at the bottom, like Excel sheet tabs -->
       <div class="account-tabs" id="accountTabs"></div>
@@ -1066,8 +1097,7 @@
     // ================================================
     let leadsBooted = false;
     let currentAccountIndex = 0;
-    let currentPage = 1;
-    const PAGE_SIZE = 25;
+    const LEADS_FETCH_SIZE = 3000; // fetch everything in one shot for continuous scroll, no page nav
 
     function bootLeadsView() {
       leadsBooted = true;
@@ -1081,7 +1111,6 @@
           tabsEl.querySelectorAll('.account-tab-btn').forEach((b) => b.classList.remove('active'));
           btn.classList.add('active');
           currentAccountIndex = parseInt(btn.dataset.idx);
-          currentPage = 1;
           loadLeads();
         });
       });
@@ -1095,16 +1124,16 @@
 
     async function loadLeads() {
       const body = document.getElementById('leadsTableBody');
-      body.innerHTML = `<tr><td colspan="6" style="padding:16px;">Loading…</td></tr>`;
+      body.innerHTML = `<tr><td colspan="7" style="padding:16px;">Loading…</td></tr>`;
       try {
         const account = currentAccount();
-        const params = new URLSearchParams({ action: 'leads', token: TOKEN, page: currentPage, pageSize: PAGE_SIZE });
+        const params = new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: LEADS_FETCH_SIZE });
         const res = await fetch(`${account.url}?${params.toString()}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         renderLeads(data);
       } catch (e) {
-        body.innerHTML = `<tr><td colspan="6" style="padding:16px;">Could not load leads: ${e.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="7" style="padding:16px;">Could not load leads: ${e.message}</td></tr>`;
       }
     }
 
@@ -1113,12 +1142,13 @@
       body.innerHTML = '';
 
       if (!data.leads.length) {
-        body.innerHTML = `<tr><td colspan="6" style="padding:16px;">No leads on this page.</td></tr>`;
+        body.innerHTML = `<tr><td colspan="7" style="padding:16px;">No leads yet on this account.</td></tr>`;
       }
 
-      data.leads.forEach((lead) => {
+      data.leads.forEach((lead, i) => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
+          <td class="row-num-cell">${i + 1}</td>
           <td class="checkbox-cell del-cell"><input type="checkbox" class="del-check" data-row="${lead.row}"></td>
           <td><input type="text" data-field="name" value="${escapeAttr(lead.name)}"></td>
           <td><input type="text" data-field="email" value="${escapeAttr(lead.email)}"></td>
@@ -1144,9 +1174,7 @@
         body.appendChild(tr);
       });
 
-      document.getElementById('pageInfo').textContent = `Page ${data.page} of ${data.totalPages || 1} (${data.totalLeads} leads)`;
-      document.getElementById('prevPageBtn').disabled = data.page <= 1;
-      document.getElementById('nextPageBtn').disabled = data.page >= data.totalPages;
+      document.getElementById('leadsCountNote').textContent = `${data.totalLeads} lead(s) on this account`;
     }
 
     function escapeAttr(str) {
@@ -1164,8 +1192,6 @@
       return data;
     }
 
-    document.getElementById('prevPageBtn').addEventListener('click', () => { currentPage--; loadLeads(); });
-    document.getElementById('nextPageBtn').addEventListener('click', () => { currentPage++; loadLeads(); });
 
     document.getElementById('deleteSelectedBtn').addEventListener('click', async () => {
       const rows = Array.from(document.querySelectorAll('.del-check:checked')).map(cb => cb.dataset.row);
@@ -1338,6 +1364,25 @@
       setTimeout(loadStatus, 5000);
       btn.disabled = false;
       btn.textContent = 'Run all now';
+    });
+
+    // ================================================
+    // Theme toggle (light/dark)
+    // ================================================
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+
+    function applyTheme(isLight) {
+      document.body.classList.toggle('light', isLight);
+      themeToggleBtn.textContent = isLight ? '☀️ Light' : '🌙 Dark';
+    }
+
+    const savedTheme = localStorage.getItem('clovr_theme');
+    applyTheme(savedTheme === 'light');
+
+    themeToggleBtn.addEventListener('click', () => {
+      const nowLight = !document.body.classList.contains('light');
+      applyTheme(nowLight);
+      localStorage.setItem('clovr_theme', nowLight ? 'light' : 'dark');
     });
 
     // ================================================
