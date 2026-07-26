@@ -37,7 +37,10 @@
     --clover:    #4F7357;
     --amber:     #B5842E;
     --danger:    #A54B3B;
+    --info:      #5C7B94;
   }
+
+  :root { --info: #7A93A8; }
 
   * { box-sizing: border-box; }
 
@@ -195,9 +198,11 @@
     color: #14120F;
     font-weight: 600;
     font-size: 15px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
   }
 
-  .btn-primary:active { opacity: 0.85; }
+  .btn-primary:hover { box-shadow: 0 4px 16px rgba(193,98,45,0.35); }
+  .btn-primary:active { transform: scale(0.97); opacity: 0.9; }
 
   .auth-error {
     color: var(--danger);
@@ -369,6 +374,17 @@
     box-shadow: 0 4px 12px rgba(60,40,20,0.07);
   }
 
+  .stat-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    display: block;
+  }
+
+  .stat-card.good .stat-icon { color: var(--clover); }
+  .stat-card.warn .stat-icon { color: var(--amber); }
+
   .stat-card .val {
     font-family: var(--font-mono);
     font-size: 22px;
@@ -423,6 +439,7 @@
     font-size: 13px;
     font-weight: 600;
     font-family: var(--font-body);
+    transition: transform 0.15s ease, opacity 0.15s ease;
   }
 
   .action-btn.primary {
@@ -431,7 +448,7 @@
     border: none;
   }
 
-  .action-btn:active { opacity: 0.8; }
+  .action-btn:active { opacity: 0.8; transform: scale(0.97); }
   .action-btn:disabled { opacity: 0.4; }
 
   .refresh-note {
@@ -532,6 +549,7 @@
   .account-card .acc-status .dot { width: 6px; height: 6px; border-radius: 50%; }
   .acc-status.ok .dot { background: var(--clover); }
   .acc-status.paused .dot { background: var(--amber); }
+  .acc-status.cooling .dot { background: var(--info); }
   .acc-status.error .dot { background: var(--danger); }
 
   .account-card .row2 {
@@ -562,8 +580,10 @@
     color: var(--text);
     font-size: 11px;
     font-weight: 600;
+    transition: transform 0.15s ease, opacity 0.15s ease;
   }
   .mini-btn:disabled { opacity: 0.4; }
+  .mini-btn:active { transform: scale(0.96); }
 
   .import-card {
     background: var(--surface);
@@ -623,12 +643,20 @@
     color: var(--text-dim);
     font-size: 13px;
     font-weight: 600;
+    transition: color 0.15s ease, background 0.15s ease;
   }
 
   .tab-btn.active {
     background: var(--surface-2);
     color: var(--terracotta);
   }
+
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .fade-in { animation: fadeInUp 0.35s ease; }
 
   #overviewView.hidden, #leadsView.hidden { display: none; }
 
@@ -937,11 +965,26 @@
 
       <div class="section-label">Fleet lifetime totals</div>
       <div class="stat-grid">
-        <div class="stat-card"><div class="val" id="lifeSent">—</div><div class="lbl">Total sent</div></div>
-        <div class="stat-card good"><div class="val" id="lifeReplied">—</div><div class="lbl">Replies</div></div>
-        <div class="stat-card"><div class="val" id="lifeReplyRate">—</div><div class="lbl">Reply rate</div></div>
-        <div class="stat-card warn"><div class="val" id="lifeBounceRate">—</div><div class="lbl">Bounce rate</div></div>
-        <div class="stat-card"><div class="val" id="fleetWaiting">—</div><div class="lbl">Waiting to send</div></div>
+        <div class="stat-card">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
+          <div class="val" id="lifeSent">—</div><div class="lbl">Total sent</div>
+        </div>
+        <div class="stat-card good">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          <div class="val" id="lifeReplied">—</div><div class="lbl">Replies</div>
+        </div>
+        <div class="stat-card">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+          <div class="val" id="lifeReplyRate">—</div><div class="lbl">Reply rate</div>
+        </div>
+        <div class="stat-card warn">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <div class="val" id="lifeBounceRate">—</div><div class="lbl">Bounce rate</div>
+        </div>
+        <div class="stat-card">
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          <div class="val" id="fleetWaiting">—</div><div class="lbl">Waiting to send</div>
+        </div>
       </div>
 
       <div class="section-label">Accounts <span id="accountCountLabel"></span></div>
@@ -1198,11 +1241,18 @@
     const overviewView   = document.getElementById('overviewView');
     const leadsView      = document.getElementById('leadsView');
 
+    function triggerFadeIn(el) {
+      el.classList.remove('fade-in');
+      void el.offsetWidth; // force reflow so the animation restarts
+      el.classList.add('fade-in');
+    }
+
     tabOverviewBtn.addEventListener('click', () => {
       tabOverviewBtn.classList.add('active');
       tabLeadsBtn.classList.remove('active');
       overviewView.classList.remove('hidden');
       leadsView.classList.add('hidden');
+      triggerFadeIn(overviewView);
     });
 
     tabLeadsBtn.addEventListener('click', () => {
@@ -1210,6 +1260,7 @@
       tabOverviewBtn.classList.remove('active');
       leadsView.classList.remove('hidden');
       overviewView.classList.add('hidden');
+      triggerFadeIn(leadsView);
       if (!leadsBooted) bootLeadsView();
     });
 
@@ -1343,6 +1394,25 @@
     // ================================================
     // Dashboard rendering — fleet-wide across all configured accounts
     // ================================================
+    // Animates an element's text from its current number up to a target,
+    // over ~600ms. Used for the gauge and the plain-integer stat cards
+    // (skipped for percentage strings like reply rate, to keep this simple).
+    function animateNumber(el, target) {
+      const start = parseInt(el.textContent.replace(/[^\d]/g, '')) || 0;
+      if (start === target) { el.textContent = target; return; }
+      const duration = 600;
+      const startTime = performance.now();
+
+      function tick(now) {
+        const progress = Math.min(1, (now - startTime) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3); // ease-out
+        const value = Math.round(start + (target - start) * eased);
+        el.textContent = value;
+        if (progress < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+
     function setGauge(remaining, cap) {
       const pct = cap > 0 ? Math.max(0, Math.min(1, remaining / cap)) : 0;
       const circumference = 502; // 2 * PI * 80, rounded
@@ -1356,7 +1426,7 @@
       fill.style.stroke = color;
       fill.style.filter = `drop-shadow(0 0 6px ${color})`;
 
-      document.getElementById('gaugeNumber').textContent = remaining;
+      animateNumber(document.getElementById('gaugeNumber'), remaining);
     }
 
     // Small per-account ring — same color logic as the fleet gauge, sized down.
@@ -1367,6 +1437,7 @@
 
       let color = 'var(--clover)';
       if (paused) color = 'var(--amber)';
+      else if (remaining <= 0) color = 'var(--info)'; // cooling — expected, not a failure
       else if (pct <= 0.15) color = 'var(--danger)';
       else if (pct <= 0.4) color = 'var(--amber)';
 
@@ -1392,7 +1463,7 @@
           <div class="account-card-body">
             <div class="row1">
               <span class="acc-name">${account.label}</span>
-              <span class="acc-status error"><span class="dot"></span>Error</span>
+              <span class="acc-status error"><span class="dot"></span>Failed</span>
             </div>
             <div class="row2">${result.error}</div>
           </div>
@@ -1406,6 +1477,19 @@
       const waiting = data.waitingToSend ?? 0;
       const lt = data.lifetime || {};
 
+      // Four real states instead of a single dot: Online (sending as normal),
+      // Cooling (quota used up for today, waiting for tomorrow's reset),
+      // Paused (you turned it off), Failed (unreachable — handled above).
+      let statusClass = 'ok';
+      let statusLabel = 'Online';
+      if (paused) {
+        statusClass = 'paused';
+        statusLabel = 'Paused';
+      } else if (remaining <= 0) {
+        statusClass = 'cooling';
+        statusLabel = 'Cooling';
+      }
+
       div.innerHTML = `
         <div class="mini-gauge-wrap" title="Tap to ${paused ? 'resume' : 'pause'} this account">
           ${miniGaugeSvg(remaining, 100, paused)}
@@ -1414,7 +1498,7 @@
         <div class="account-card-body">
           <div class="row1">
             <span class="acc-name">${data.account || account.label}</span>
-            <span class="acc-status ${paused ? 'paused' : 'ok'}"><span class="dot"></span>${paused ? 'Paused' : 'Running'}</span>
+            <span class="acc-status ${statusClass}"><span class="dot"></span>${statusLabel}</span>
           </div>
           <div class="row2">
             <span><strong>${waiting}</strong> waiting</span>
@@ -1485,11 +1569,11 @@
       setGauge(totalRemaining, totalCap);
       document.getElementById('gaugeLabel').textContent = `left today across ${okCount}/${ACCOUNTS.length} accounts`;
 
-      document.getElementById('lifeSent').textContent = ltSent || '—';
-      document.getElementById('lifeReplied').textContent = ltReplied || '—';
+      animateNumber(document.getElementById('lifeSent'), ltSent);
+      animateNumber(document.getElementById('lifeReplied'), ltReplied);
       document.getElementById('lifeReplyRate').textContent = ltSent > 0 ? ((ltReplied / ltSent) * 100).toFixed(1) + '%' : '—';
       document.getElementById('lifeBounceRate').textContent = ltSent > 0 ? ((ltBounced / ltSent) * 100).toFixed(1) + '%' : '—';
-      document.getElementById('fleetWaiting').textContent = totalWaiting;
+      animateNumber(document.getElementById('fleetWaiting'), totalWaiting);
 
       document.getElementById('accountCountLabel').textContent = `(${okCount}/${ACCOUNTS.length} online)`;
 
