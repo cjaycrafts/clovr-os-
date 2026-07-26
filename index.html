@@ -314,7 +314,7 @@
     stroke: var(--clover);
     stroke-width: 14;
     stroke-linecap: round;
-    transition: stroke-dashoffset 0.8s ease, stroke 0.4s ease;
+    transition: stroke-dashoffset 0.8s ease, stroke 0.4s ease, filter 0.4s ease;
   }
 
   .gauge-center {
@@ -353,15 +353,20 @@
 
   .stat-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 10px;
   }
 
   .stat-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 14px 16px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+  }
+
+  body.light .stat-card {
+    box-shadow: 0 4px 12px rgba(60,40,20,0.07);
   }
 
   .stat-card .val {
@@ -440,16 +445,68 @@
   .account-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 12px 14px;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+    transition: box-shadow 0.2s ease;
+  }
+
+  body.light .account-card {
+    box-shadow: 0 4px 14px rgba(60,40,20,0.08);
+  }
+
+  .mini-gauge-wrap {
+    width: 56px;
+    height: 56px;
+    position: relative;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+
+  .mini-gauge-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+
+  .mini-gauge-track {
+    fill: none;
+    stroke: var(--surface-2);
+    stroke-width: 6;
+  }
+
+  .mini-gauge-fill {
+    fill: none;
+    stroke-width: 6;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease;
+  }
+
+  .mini-gauge-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.1;
+    pointer-events: none;
+  }
+
+  .account-card-body {
+    flex: 1;
+    min-width: 0;
   }
 
   .account-card .row1 {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+    gap: 8px;
   }
 
   .account-card .acc-name {
@@ -459,7 +516,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 180px;
+    max-width: 150px;
   }
 
   .account-card .acc-status {
@@ -470,6 +527,7 @@
     display: flex;
     align-items: center;
     gap: 5px;
+    flex-shrink: 0;
   }
   .account-card .acc-status .dot { width: 6px; height: 6px; border-radius: 50%; }
   .acc-status.ok .dot { background: var(--clover); }
@@ -479,15 +537,21 @@
   .account-card .row2 {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 12px;
     font-size: 11px;
     color: var(--text-dim);
-    margin-bottom: 10px;
+    flex-wrap: wrap;
   }
 
   .account-card .row2 strong { color: var(--text); font-family: var(--font-mono); }
 
-  .account-card .row3 { display: flex; gap: 8px; }
+  .account-card .tap-hint {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-align: center;
+    margin-top: 2px;
+    opacity: 0.7;
+  }
 
   .mini-btn {
     flex: 1;
@@ -825,6 +889,7 @@
         <div class="stat-card good"><div class="val" id="lifeReplied">—</div><div class="lbl">Replies</div></div>
         <div class="stat-card"><div class="val" id="lifeReplyRate">—</div><div class="lbl">Reply rate</div></div>
         <div class="stat-card warn"><div class="val" id="lifeBounceRate">—</div><div class="lbl">Bounce rate</div></div>
+        <div class="stat-card"><div class="val" id="fleetWaiting">—</div><div class="lbl">Waiting to send</div></div>
       </div>
 
       <div class="section-label">Accounts <span id="accountCountLabel"></span></div>
@@ -1237,8 +1302,31 @@
       if (pct <= 0.15) color = 'var(--danger)';
       else if (pct <= 0.4) color = 'var(--amber)';
       fill.style.stroke = color;
+      fill.style.filter = `drop-shadow(0 0 6px ${color})`;
 
       document.getElementById('gaugeNumber').textContent = remaining;
+    }
+
+    // Small per-account ring — same color logic as the fleet gauge, sized down.
+    function miniGaugeSvg(remaining, cap, paused) {
+      const pct = cap > 0 ? Math.max(0, Math.min(1, remaining / cap)) : 0;
+      const circumference = 138; // 2 * PI * 22
+      const offset = circumference * (1 - pct);
+
+      let color = 'var(--clover)';
+      if (paused) color = 'var(--amber)';
+      else if (pct <= 0.15) color = 'var(--danger)';
+      else if (pct <= 0.4) color = 'var(--amber)';
+
+      return `
+        <svg viewBox="0 0 56 56">
+          <circle class="mini-gauge-track" cx="28" cy="28" r="22"></circle>
+          <circle class="mini-gauge-fill" cx="28" cy="28" r="22"
+            stroke="${color}" style="filter: drop-shadow(0 0 4px ${color});"
+            stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+            transform="rotate(-90 28 28)"></circle>
+        </svg>
+      `;
     }
 
     let lastResults = []; // cached per-account results, so button clicks don't need a full refetch to find their account
@@ -1249,52 +1337,58 @@
 
       if (result.error) {
         div.innerHTML = `
-          <div class="row1">
-            <span class="acc-name">${account.label}</span>
-            <span class="acc-status error"><span class="dot"></span>Error</span>
+          <div class="account-card-body">
+            <div class="row1">
+              <span class="acc-name">${account.label}</span>
+              <span class="acc-status error"><span class="dot"></span>Error</span>
+            </div>
+            <div class="row2">${result.error}</div>
           </div>
-          <div class="row2">${result.error}</div>
         `;
         return div;
       }
 
       const data = result.data;
       const paused = data.paused;
-      const remaining = data.remainingQuotaToday ?? '—';
+      const remaining = data.remainingQuotaToday ?? 0;
+      const waiting = data.waitingToSend ?? 0;
       const lt = data.lifetime || {};
 
       div.innerHTML = `
-        <div class="row1">
-          <span class="acc-name">${data.account || account.label}</span>
-          <span class="acc-status ${paused ? 'paused' : 'ok'}"><span class="dot"></span>${paused ? 'Paused' : 'Running'}</span>
+        <div class="mini-gauge-wrap" title="Tap to ${paused ? 'resume' : 'pause'} this account">
+          ${miniGaugeSvg(remaining, 100, paused)}
+          <div class="mini-gauge-center">${paused ? '⏸' : remaining}</div>
         </div>
-        <div class="row2">
-          <span><strong>${remaining}</strong> left today</span>
-          <span><strong>${lt.sent ?? 0}</strong> lifetime sent</span>
-        </div>
-        <div class="row3">
-          <button class="mini-btn pause-btn">${paused ? 'Resume' : 'Pause'}</button>
-          <button class="mini-btn run-btn">Run now</button>
+        <div class="account-card-body">
+          <div class="row1">
+            <span class="acc-name">${data.account || account.label}</span>
+            <span class="acc-status ${paused ? 'paused' : 'ok'}"><span class="dot"></span>${paused ? 'Paused' : 'Running'}</span>
+          </div>
+          <div class="row2">
+            <span><strong>${waiting}</strong> waiting</span>
+            <span><strong>${lt.sent ?? 0}</strong> lifetime sent</span>
+          </div>
+          <div class="tap-hint">Tap ring to ${paused ? 'resume' : 'pause'} · <span class="run-btn" style="text-decoration:underline; cursor:pointer;">run now</span></div>
         </div>
       `;
 
-      div.querySelector('.pause-btn').addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        btn.disabled = true;
+      div.querySelector('.mini-gauge-wrap').addEventListener('click', async (e) => {
+        const wrap = e.currentTarget;
+        wrap.style.opacity = '0.5';
         try {
           await callApiFor(account, paused ? 'resume' : 'pause');
           showToast(`${account.label}: ${paused ? 'resumed' : 'paused'}`);
           await loadStatus();
         } catch (err) {
           showToast(`${account.label}: action failed`);
-          btn.disabled = false;
+          wrap.style.opacity = '1';
         }
       });
 
       div.querySelector('.run-btn').addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        btn.disabled = true;
-        btn.textContent = 'Running…';
+        e.stopPropagation();
+        const el = e.currentTarget;
+        el.textContent = 'running…';
         try {
           await callApiFor(account, 'runNow');
           showToast(`${account.label}: run triggered`);
@@ -1302,8 +1396,6 @@
         } catch (err) {
           showToast(`${account.label}: run failed`);
         }
-        btn.disabled = false;
-        btn.textContent = 'Run now';
       });
 
       return div;
@@ -1323,6 +1415,7 @@
       // Fleet totals
       let totalRemaining = 0, totalCap = 0;
       let ltSent = 0, ltReplied = 0, ltBounced = 0;
+      let totalWaiting = 0;
       let okCount = 0;
 
       lastResults.forEach((r) => {
@@ -1330,6 +1423,7 @@
         okCount++;
         totalRemaining += r.data.remainingQuotaToday || 0;
         totalCap += 100; // assumes 100/day consumer cap per account
+        totalWaiting += r.data.waitingToSend || 0;
         const lt = r.data.lifetime || {};
         ltSent += lt.sent || 0;
         ltReplied += lt.replied || 0;
@@ -1343,6 +1437,7 @@
       document.getElementById('lifeReplied').textContent = ltReplied || '—';
       document.getElementById('lifeReplyRate').textContent = ltSent > 0 ? ((ltReplied / ltSent) * 100).toFixed(1) + '%' : '—';
       document.getElementById('lifeBounceRate').textContent = ltSent > 0 ? ((ltBounced / ltSent) * 100).toFixed(1) + '%' : '—';
+      document.getElementById('fleetWaiting').textContent = totalWaiting;
 
       document.getElementById('accountCountLabel').textContent = `(${okCount}/${ACCOUNTS.length} online)`;
 
