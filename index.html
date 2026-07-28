@@ -347,6 +347,95 @@
   }
 
   /* Stat grid */
+  .donut-section {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+    flex-wrap: wrap;
+  }
+
+  body.light .donut-section {
+    box-shadow: 0 4px 12px rgba(60,40,20,0.07);
+  }
+
+  .donut-wrap {
+    width: 140px;
+    height: 140px;
+    position: relative;
+    flex-shrink: 0;
+    margin: 0 auto;
+  }
+
+  .donut-ring {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: conic-gradient(var(--border) 0% 100%);
+    transition: background 0.7s ease;
+  }
+
+  .donut-hole {
+    position: absolute;
+    inset: 24%;
+    border-radius: 50%;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .donut-total {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .donut-total-lbl {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  .donut-legend {
+    flex: 1;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .donut-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .donut-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .donut-legend-label {
+    color: var(--text-dim);
+    flex: 1;
+  }
+
+  .donut-legend-value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text);
+  }
+
   .section-label {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -987,6 +1076,18 @@
         </div>
       </div>
 
+      <div class="section-label">Lifetime outcomes (fleet-wide)</div>
+      <div class="donut-section">
+        <div class="donut-wrap">
+          <div class="donut-ring" id="donutRing"></div>
+          <div class="donut-hole">
+            <div class="donut-total" id="donutTotal">—</div>
+            <div class="donut-total-lbl">total leads</div>
+          </div>
+        </div>
+        <div class="donut-legend" id="donutLegend"></div>
+      </div>
+
       <div class="section-label">Accounts <span id="accountCountLabel"></span></div>
       <div id="accountList"></div>
 
@@ -1413,6 +1514,51 @@
       requestAnimationFrame(tick);
     }
 
+    function renderDonut(sent, replied, bounced, waiting) {
+      const noResponse = Math.max(0, sent - replied - bounced);
+      const total = replied + bounced + noResponse + waiting;
+
+      const segments = [
+        { label: 'Replied', value: replied, color: 'var(--clover)' },
+        { label: 'Bounced', value: bounced, color: 'var(--danger)' },
+        { label: 'No response yet', value: noResponse, color: 'var(--text-dim)' },
+        { label: 'Waiting to send', value: waiting, color: 'var(--info)' }
+      ];
+
+      const ring = document.getElementById('donutRing');
+      const legend = document.getElementById('donutLegend');
+
+      if (total === 0) {
+        ring.style.background = 'conic-gradient(var(--border) 0% 100%)';
+        legend.innerHTML = `<div class="donut-legend-row"><span class="donut-legend-label">No lead data yet</span></div>`;
+        document.getElementById('donutTotal').textContent = '0';
+        return;
+      }
+
+      let cursor = 0;
+      const stops = segments.map((seg) => {
+        const pct = (seg.value / total) * 100;
+        const stop = `${seg.color} ${cursor}% ${cursor + pct}%`;
+        cursor += pct;
+        return stop;
+      });
+
+      ring.style.background = `conic-gradient(${stops.join(', ')})`;
+
+      legend.innerHTML = segments.map((seg) => {
+        const pct = total > 0 ? ((seg.value / total) * 100).toFixed(1) : '0.0';
+        return `
+          <div class="donut-legend-row">
+            <span class="donut-legend-dot" style="background:${seg.color};"></span>
+            <span class="donut-legend-label">${seg.label}</span>
+            <span class="donut-legend-value">${seg.value} (${pct}%)</span>
+          </div>
+        `;
+      }).join('');
+
+      animateNumber(document.getElementById('donutTotal'), total);
+    }
+
     function setGauge(remaining, cap) {
       const pct = cap > 0 ? Math.max(0, Math.min(1, remaining / cap)) : 0;
       const circumference = 502; // 2 * PI * 80, rounded
@@ -1574,6 +1720,7 @@
       document.getElementById('lifeReplyRate').textContent = ltSent > 0 ? ((ltReplied / ltSent) * 100).toFixed(1) + '%' : '—';
       document.getElementById('lifeBounceRate').textContent = ltSent > 0 ? ((ltBounced / ltSent) * 100).toFixed(1) + '%' : '—';
       animateNumber(document.getElementById('fleetWaiting'), totalWaiting);
+      renderDonut(ltSent, ltReplied, ltBounced, totalWaiting);
 
       document.getElementById('accountCountLabel').textContent = `(${okCount}/${ACCOUNTS.length} online)`;
 
