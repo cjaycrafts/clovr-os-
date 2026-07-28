@@ -861,6 +861,43 @@
     pointer-events: none;
   }
 
+  #activityView {
+    max-width: 700px;
+  }
+
+  .log-entry {
+    display: flex;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+
+  .log-entry.type-run_start, .log-entry.type-manual_run { border-left-color: var(--clover); }
+  .log-entry.type-run_end { border-left-color: var(--info); }
+  .log-entry.type-pause { border-left-color: var(--amber); }
+  .log-entry.type-resume { border-left-color: var(--clover); }
+  .log-entry.type-import { border-left-color: var(--terracotta); }
+  .log-entry.type-delete, .log-entry.type-hard_reset { border-left-color: var(--danger); }
+  .log-entry.type-auto_cleanup { border-left-color: var(--text-dim); }
+
+  .log-entry-time {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+
+  .log-entry-message {
+    color: var(--text);
+  }
+
   .account-tabs {
     display: flex;
     overflow-x: auto;
@@ -1028,6 +1065,7 @@
     <div class="tab-bar">
       <button class="tab-btn active" id="tabOverviewBtn">Overview</button>
       <button class="tab-btn" id="tabLeadsBtn">Leads</button>
+      <button class="tab-btn" id="tabActivityBtn">Activity</button>
     </div>
 
     <main id="overviewView">
@@ -1123,6 +1161,13 @@
 
       <!-- Account tabs live at the bottom, like Excel sheet tabs -->
       <div class="account-tabs" id="accountTabs"></div>
+    </main>
+
+    <main id="activityView" class="hidden">
+      <div id="activityLogList">Loading…</div>
+
+      <!-- Account tabs live at the bottom, same pattern as Leads -->
+      <div class="account-tabs" id="activityAccountTabs"></div>
     </main>
 
     <div class="action-bar">
@@ -1339,8 +1384,10 @@
     // ================================================
     const tabOverviewBtn = document.getElementById('tabOverviewBtn');
     const tabLeadsBtn    = document.getElementById('tabLeadsBtn');
+    const tabActivityBtn = document.getElementById('tabActivityBtn');
     const overviewView   = document.getElementById('overviewView');
     const leadsView      = document.getElementById('leadsView');
+    const activityView   = document.getElementById('activityView');
 
     function triggerFadeIn(el) {
       el.classList.remove('fade-in');
@@ -1348,21 +1395,26 @@
       el.classList.add('fade-in');
     }
 
+    function activateTab(activeBtn, activeView) {
+      [tabOverviewBtn, tabLeadsBtn, tabActivityBtn].forEach((b) => b.classList.remove('active'));
+      [overviewView, leadsView, activityView].forEach((v) => v.classList.add('hidden'));
+      activeBtn.classList.add('active');
+      activeView.classList.remove('hidden');
+      triggerFadeIn(activeView);
+    }
+
     tabOverviewBtn.addEventListener('click', () => {
-      tabOverviewBtn.classList.add('active');
-      tabLeadsBtn.classList.remove('active');
-      overviewView.classList.remove('hidden');
-      leadsView.classList.add('hidden');
-      triggerFadeIn(overviewView);
+      activateTab(tabOverviewBtn, overviewView);
     });
 
     tabLeadsBtn.addEventListener('click', () => {
-      tabLeadsBtn.classList.add('active');
-      tabOverviewBtn.classList.remove('active');
-      leadsView.classList.remove('hidden');
-      overviewView.classList.add('hidden');
-      triggerFadeIn(leadsView);
+      activateTab(tabLeadsBtn, leadsView);
       if (!leadsBooted) bootLeadsView();
+    });
+
+    tabActivityBtn.addEventListener('click', () => {
+      activateTab(tabActivityBtn, activityView);
+      if (!activityBooted) bootActivityView();
     });
 
     // ================================================
@@ -1491,6 +1543,66 @@
         showToast('Reset failed: ' + e.message);
       }
     });
+
+    // ================================================
+    // Activity log view
+    // ================================================
+    let activityBooted = false;
+    let activityAccountIndex = 0;
+
+    function bootActivityView() {
+      activityBooted = true;
+      const tabsEl = document.getElementById('activityAccountTabs');
+      tabsEl.innerHTML = ACCOUNTS.map((a, i) =>
+        `<button class="account-tab-btn${i === 0 ? ' active' : ''}" data-idx="${i}">${a.label}</button>`
+      ).join('');
+
+      tabsEl.querySelectorAll('.account-tab-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          tabsEl.querySelectorAll('.account-tab-btn').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          activityAccountIndex = parseInt(btn.dataset.idx);
+          loadActivityLog();
+        });
+      });
+
+      loadActivityLog();
+    }
+
+    async function loadActivityLog() {
+      const listEl = document.getElementById('activityLogList');
+      listEl.textContent = 'Loading…';
+      try {
+        const account = ACCOUNTS[activityAccountIndex];
+        const params = new URLSearchParams({ action: 'activityLog', token: TOKEN });
+        const res = await fetch(`${account.url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        renderActivityLog(data.log || []);
+      } catch (e) {
+        listEl.textContent = 'Could not load activity log: ' + e.message;
+      }
+    }
+
+    function renderActivityLog(entries) {
+      const listEl = document.getElementById('activityLogList');
+      if (!entries.length) {
+        listEl.textContent = 'No activity recorded yet on this account.';
+        return;
+      }
+
+      listEl.innerHTML = entries.map((entry) => {
+        const time = new Date(entry.time).toLocaleString([], {
+          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+        return `
+          <div class="log-entry type-${entry.type}">
+            <span class="log-entry-time">${time}</span>
+            <span class="log-entry-message">${entry.message}</span>
+          </div>
+        `;
+      }).join('');
+    }
 
     // ================================================
     // Dashboard rendering — fleet-wide across all configured accounts
