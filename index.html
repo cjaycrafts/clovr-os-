@@ -304,6 +304,28 @@
     position: relative;
     width: 190px;
     height: 190px;
+    --pulse-color: #6B8F71;
+  }
+
+  .gauge-wrap::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
+    border: 2px solid var(--pulse-color);
+    opacity: 0;
+    animation: heartbeatPulse 2.4s ease-out infinite;
+    pointer-events: none;
+  }
+
+  @keyframes heartbeatPulse {
+    0% { transform: scale(0.94); opacity: 0.55; }
+    70% { transform: scale(1.08); opacity: 0; }
+    100% { transform: scale(1.08); opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gauge-wrap::before { animation: none; opacity: 0; }
   }
 
   .gauge-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
@@ -896,6 +918,49 @@
 
   .log-entry-message {
     color: var(--text);
+  }
+
+  .log-date-group {
+    margin-bottom: 22px;
+  }
+
+  .log-date-header {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    border-bottom: 2px solid var(--terracotta);
+  }
+
+  .log-state {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .log-state-error {
+    background: rgba(184, 92, 74, 0.12);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+  }
+
+  .log-state-empty {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    color: var(--text-dim);
+  }
+
+  .log-state::before {
+    content: '●';
+    font-size: 8px;
+    line-height: 1.8;
+    flex-shrink: 0;
   }
 
   .account-tabs {
@@ -1580,25 +1645,49 @@
         if (data.error) throw new Error(data.error);
         renderActivityLog(data.log || []);
       } catch (e) {
-        listEl.textContent = 'Could not load activity log: ' + e.message;
+        listEl.innerHTML = `<div class="log-state log-state-error">Could not load activity log: ${e.message}</div>`;
       }
     }
 
     function renderActivityLog(entries) {
       const listEl = document.getElementById('activityLogList');
       if (!entries.length) {
-        listEl.textContent = 'No activity recorded yet on this account.';
+        listEl.innerHTML = `<div class="log-state log-state-empty">Probably no activity yet — nothing has run or been triggered on this account since it was set up.</div>`;
         return;
       }
 
-      listEl.innerHTML = entries.map((entry) => {
-        const time = new Date(entry.time).toLocaleString([], {
-          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-        });
+      // Group entries by calendar day, notebook-style: a date heading,
+      // then every event that happened that day underneath it.
+      const groups = [];
+      let currentDay = null;
+      let currentGroup = null;
+
+      entries.forEach((entry) => {
+        const d = new Date(entry.time);
+        const dayKey = d.toDateString();
+        if (dayKey !== currentDay) {
+          currentDay = dayKey;
+          currentGroup = { dayKey, label: d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }), entries: [] };
+          groups.push(currentGroup);
+        }
+        currentGroup.entries.push(entry);
+      });
+
+      listEl.innerHTML = groups.map((group) => {
+        const rows = group.entries.map((entry) => {
+          const time = new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          return `
+            <div class="log-entry type-${entry.type}">
+              <span class="log-entry-time">${time}</span>
+              <span class="log-entry-message">${entry.message}</span>
+            </div>
+          `;
+        }).join('');
+
         return `
-          <div class="log-entry type-${entry.type}">
-            <span class="log-entry-time">${time}</span>
-            <span class="log-entry-message">${entry.message}</span>
+          <div class="log-date-group">
+            <div class="log-date-header">${group.label}</div>
+            ${rows}
           </div>
         `;
       }).join('');
@@ -1683,6 +1772,7 @@
       else if (pct <= 0.4) color = 'var(--amber)';
       fill.style.stroke = color;
       fill.style.filter = `drop-shadow(0 0 6px ${color})`;
+      document.querySelector('.gauge-wrap').style.setProperty('--pulse-color', color);
 
       animateNumber(document.getElementById('gaugeNumber'), remaining);
     }
