@@ -1232,6 +1232,7 @@
       <div class="import-card">
         <label class="file-input-label" id="fileLabel" for="fileInput">Tap to choose a CSV or Excel file</label>
         <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
+        <select id="importTargetSelect" style="width:100%; padding:10px; margin-bottom:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;"></select>
         <button class="btn-primary" id="importBtn" disabled>Select a file first</button>
         <div class="import-summary" id="importSummary"></div>
       </div>
@@ -1308,6 +1309,10 @@
         <button class="danger-btn" id="resetWeekBtn">Hard reset (clears leads, keeps lifetime stats)</button>
         <button class="mini-btn" id="deleteSelectedBtn" style="flex:1;">Delete selected</button>
       </div>
+      <div class="leads-toolbar">
+        <button class="mini-btn" id="scanDuplicatesBtn" style="flex:1;">Scan fleet for duplicate leads</button>
+      </div>
+      <div id="duplicateScanResults"></div>
 
       <div class="sheet-wrap">
         <table class="sheet">
@@ -1446,6 +1451,10 @@
     // Uses Content-Type: text/plain to avoid CORS preflight on POST.
     // ================================================
     const fileInput    = document.getElementById('fileInput');
+    const importTargetSelect = document.getElementById('importTargetSelect');
+    importTargetSelect.innerHTML =
+      ACCOUNTS.map((a, i) => `<option value="${i}">Import to ${a.label}</option>`).join('') +
+      `<option value="distribute">Distribute evenly across all accounts</option>`;
     const fileLabel     = document.getElementById('fileLabel');
     const importBtn     = document.getElementById('importBtn');
     const importSummary = document.getElementById('importSummary');
@@ -1464,7 +1473,7 @@
     }
 
     function mapRowsToLeads(rows) {
-      if (!rows.length) return [];
+      if (!rows.length) return { leads: [], detected: null, rawHeaders: [] };
       const headers = Object.keys(rows[0]).map(normalizeHeader);
       const originalHeaders = Object.keys(rows[0]);
 
@@ -1482,13 +1491,43 @@
       const domainCol      = findColumn(COLUMN_MAP.domain);
       const indexedDateCol = findColumn(COLUMN_MAP.indexedDate);
 
-      return rows.map((row) => ({
+      const leads = rows.map((row) => ({
         name: nameCol ? row[nameCol] : '',
         email: emailCol ? row[emailCol] : '',
         storeName: storeCol ? row[storeCol] : '',
         domain: domainCol ? row[domainCol] : '',
         indexedDate: indexedDateCol ? row[indexedDateCol] : ''
       }));
+
+      return {
+        leads,
+        rawHeaders: originalHeaders,
+        detected: { name: nameCol, email: emailCol, storeName: storeCol, domain: domainCol, indexedDate: indexedDateCol }
+      };
+    }
+
+    function renderDetectionSummary(result) {
+      const rows = [
+        ['Name', result.detected.name],
+        ['Email', result.detected.email],
+        ['Store Name', result.detected.storeName],
+        ['Domain', result.detected.domain],
+        ['Indexed Date', result.detected.indexedDate]
+      ];
+
+      const lines = rows.map(([field, matchedHeader]) => {
+        const ok = matchedHeader !== null;
+        const color = ok ? 'var(--clover)' : 'var(--danger)';
+        const text = ok ? `matched column "${matchedHeader}"` : 'not found in file';
+        return `<div style="color:${color};">${ok ? '✓' : '✗'} ${field} — ${text}</div>`;
+      }).join('');
+
+      return `
+        <div style="margin-bottom:8px; font-family:var(--font-mono); font-size:11px; line-height:1.7;">
+          ${lines}
+          <div style="color:var(--text-dim); margin-top:6px;">Your file's actual headers: ${result.rawHeaders.join(', ')}</div>
+        </div>
+      `;
     }
 
     fileInput.addEventListener('change', () => {
@@ -1501,15 +1540,31 @@
 
       const ext = file.name.split('.').pop().toLowerCase();
 
+      function handleParsed(rawRows) {
+        const result = mapRowsToLeads(rawRows);
+        parsedRows = result.leads;
+
+        if (!result.detected) {
+          importSummary.innerHTML = `<div class="log-state log-state-error">File appears empty or unreadable.</div>`;
+          return;
+        }
+
+        importSummary.innerHTML = renderDetectionSummary(result);
+
+        if (!result.detected.name || !result.detected.email || !result.detected.storeName) {
+          importBtn.disabled = true;
+          importBtn.textContent = 'Fix column names first';
+        } else {
+          importBtn.disabled = false;
+          importBtn.textContent = `Import ${parsedRows.length} leads`;
+        }
+      }
+
       if (ext === 'csv') {
         Papa.parse(file, {
           header: true,
           skipEmptyLines: true,
-          complete: (results) => {
-            parsedRows = mapRowsToLeads(results.data);
-            importBtn.disabled = false;
-            importBtn.textContent = `Import ${parsedRows.length} leads to Account 1`;
-          }
+          complete: (results) => handleParsed(results.data)
         });
       } else {
         const reader = new FileReader();
@@ -1517,36 +1572,116 @@
           const wb = XLSX.read(e.target.result, { type: 'array' });
           const sheet = wb.Sheets[wb.SheetNames[0]];
           const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-          parsedRows = mapRowsToLeads(json);
-          importBtn.disabled = false;
-          importBtn.textContent = `Import ${parsedRows.length} leads to Account 1`;
+          handleParsed(json);
         };
         reader.readAsArrayBuffer(file);
       }
     });
 
+    // Fetches every account's existing emails in parallel, for the
+    // fleet-wide duplicate check. Accounts that fail to respond are simply
+    // skipped for this check (not treated as duplicates).
+    async function getFleetEmailSet() {
+      const results = await Promise.allSettled(
+        ACCOUNTS.map((acc) =>
+          fetch(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
+            .then((r) => r.json())
+        )
+      );
+
+      const emailSet = new Set();
+      results.forEach((r) => {
+        if (r.status === 'fulfilled' && r.value.leads) {
+          r.value.leads.forEach((lead) => {
+            if (lead.email) emailSet.add(lead.email.toLowerCase().trim());
+          });
+        }
+      });
+      return emailSet;
+    }
+
+    function splitEvenly(arr, parts) {
+      const chunks = Array.from({ length: parts }, () => []);
+      arr.forEach((item, i) => chunks[i % parts].push(item));
+      return chunks;
+    }
+
     importBtn.addEventListener('click', async () => {
       if (!parsedRows || !parsedRows.length) return;
       importBtn.disabled = true;
-      importBtn.textContent = 'Importing…';
-      importSummary.textContent = 'Uploading and validating — this can take a bit for MX checks on each lead…';
+      importBtn.textContent = 'Checking for duplicates across fleet…';
+      importSummary.textContent = 'Checking every account for existing leads before importing…';
 
       try {
-        const res = await fetch(ACCOUNTS[0].url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ token: TOKEN, action: 'importLeads', leads: parsedRows })
-        });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        // Step 1: fleet-wide duplicate check — runs regardless of target,
+        // so a lead already sitting in ANY account never gets imported twice.
+        const fleetEmails = await getFleetEmailSet();
+        const beforeCount = parsedRows.length;
+        const deduped = parsedRows.filter((lead) => !fleetEmails.has((lead.email || '').toLowerCase().trim()));
+        const fleetDuplicatesRemoved = beforeCount - deduped.length;
+
+        if (!deduped.length) {
+          importSummary.innerHTML = `<div class="log-state log-state-empty">All ${beforeCount} lead(s) already exist somewhere in your fleet — nothing new to import.</div>`;
+          importBtn.textContent = 'Import';
+          importBtn.disabled = false;
+          return;
+        }
+
+        const target = importTargetSelect.value;
+        importBtn.textContent = 'Importing and validating…';
+
+        let combined = { totalReceived: 0, accepted: 0, rejected: { missingFields: 0, invalidFormat: 0, duplicate: 0, mxFailed: 0 } };
+        let perAccountSummary = [];
+
+        if (target === 'distribute') {
+          const validAccounts = ACCOUNTS; // errors handled per-chunk below
+          const chunks = splitEvenly(deduped, validAccounts.length);
+
+          const results = await Promise.allSettled(
+            validAccounts.map((acc, i) =>
+              fetch(acc.url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ token: TOKEN, action: 'importLeads', leads: chunks[i] })
+              }).then((r) => r.json())
+            )
+          );
+
+          results.forEach((r, i) => {
+            if (r.status === 'fulfilled' && !r.value.error) {
+              const d = r.value;
+              combined.totalReceived += d.totalReceived;
+              combined.accepted += d.accepted;
+              combined.rejected.missingFields += d.rejected.missingFields;
+              combined.rejected.invalidFormat += d.rejected.invalidFormat;
+              combined.rejected.duplicate += d.rejected.duplicate;
+              combined.rejected.mxFailed += d.rejected.mxFailed;
+              perAccountSummary.push(`${validAccounts[i].label}: ${d.accepted} accepted`);
+            } else {
+              perAccountSummary.push(`${validAccounts[i].label}: failed`);
+            }
+          });
+        } else {
+          const account = ACCOUNTS[parseInt(target)];
+          const res = await fetch(account.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ token: TOKEN, action: 'importLeads', leads: deduped })
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          combined = data;
+        }
 
         importSummary.innerHTML = `
-          <span class="accepted">${data.accepted} accepted</span> ·
-          <span class="rejected">${data.totalReceived - data.accepted} rejected</span><br>
-          Missing fields: ${data.rejected.missingFields} ·
-          Invalid format: ${data.rejected.invalidFormat} ·
-          Duplicates: ${data.rejected.duplicate} ·
-          Failed MX: ${data.rejected.mxFailed}
+          <span class="accepted">${combined.accepted} accepted</span> ·
+          <span class="rejected">${combined.totalReceived - combined.accepted} rejected</span><br>
+          Fleet duplicates skipped: ${fleetDuplicatesRemoved} ·
+          Missing fields: ${combined.rejected.missingFields} ·
+          Invalid format: ${combined.rejected.invalidFormat} ·
+          Duplicates: ${combined.rejected.duplicate} ·
+          Failed MX: ${combined.rejected.mxFailed}
+          ${perAccountSummary.length ? '<br>' + perAccountSummary.join(' · ') : ''}
         `;
         showToast('Import complete');
         loadStatus();
@@ -1709,6 +1844,51 @@
         loadLeads();
       } catch (e) {
         showToast('Delete failed: ' + e.message);
+      }
+    });
+
+    document.getElementById('scanDuplicatesBtn').addEventListener('click', async () => {
+      const resultsEl = document.getElementById('duplicateScanResults');
+      resultsEl.innerHTML = `<div class="log-state log-state-empty">Scanning all accounts…</div>`;
+
+      try {
+        const results = await Promise.allSettled(
+          ACCOUNTS.map((acc) =>
+            fetch(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
+              .then((r) => r.json())
+          )
+        );
+
+        const emailMap = {}; // email -> [account labels]
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled' && r.value.leads) {
+            r.value.leads.forEach((lead) => {
+              if (!lead.email) return;
+              const key = lead.email.toLowerCase().trim();
+              if (!emailMap[key]) emailMap[key] = [];
+              emailMap[key].push(ACCOUNTS[i].label);
+            });
+          }
+        });
+
+        const overlaps = Object.entries(emailMap).filter(([email, accounts]) => accounts.length > 1);
+
+        if (!overlaps.length) {
+          resultsEl.innerHTML = `<div class="log-state log-state-empty">No duplicates found across the fleet — every lead lives on exactly one account.</div>`;
+          return;
+        }
+
+        resultsEl.innerHTML = `
+          <div class="log-state" style="background:rgba(212,167,61,0.12); border:1px solid var(--amber); color:var(--amber); flex-direction:column; align-items:stretch;">
+            <strong>${overlaps.length} duplicate email(s) found across your fleet:</strong>
+            <div style="margin-top:8px; font-family:var(--font-mono); font-size:11px; color:var(--text);">
+              ${overlaps.map(([email, accounts]) => `${email} → ${accounts.join(', ')}`).join('<br>')}
+            </div>
+            <div style="margin-top:8px; font-size:11px; color:var(--text-dim);">Nothing was deleted automatically — review these manually in the Leads grid for each account and decide which copy to keep.</div>
+          </div>
+        `;
+      } catch (e) {
+        resultsEl.innerHTML = `<div class="log-state log-state-error">Scan failed: ${e.message}</div>`;
       }
     });
 
