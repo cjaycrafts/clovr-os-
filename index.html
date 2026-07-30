@@ -458,6 +458,72 @@
     color: var(--text);
   }
 
+  .bar-chart-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+  }
+
+  body.light .bar-chart-section {
+    box-shadow: 0 4px 12px rgba(60,40,20,0.07);
+  }
+
+  .bar-row {
+    margin-bottom: 14px;
+  }
+
+  .bar-row:last-child { margin-bottom: 0; }
+
+  .bar-row-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+
+  .bar-row-label strong { color: var(--text); }
+
+  .bar-track {
+    display: flex;
+    height: 14px;
+    border-radius: 7px;
+    overflow: hidden;
+    background: var(--surface-2);
+  }
+
+  .bar-seg {
+    height: 100%;
+    transition: width 0.6s ease;
+  }
+
+  .bar-seg.replied { background: var(--clover); }
+  .bar-seg.noresponse { background: var(--text-dim); opacity: 0.4; }
+  .bar-seg.bounced { background: var(--danger); }
+
+  .bar-legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-wrap: wrap;
+  }
+
+  .bar-legend span { display: flex; align-items: center; gap: 5px; }
+
+  .bar-legend .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
   .section-label {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -811,7 +877,7 @@
   table.sheet {
     border-collapse: collapse;
     width: 100%;
-    min-width: 760px;
+    min-width: 940px;
     font-family: var(--font-mono);
     font-size: 13px;
   }
@@ -1194,6 +1260,9 @@
       <div class="section-label">Accounts <span id="accountCountLabel"></span></div>
       <div id="accountList"></div>
 
+      <div class="section-label">Accounts compared</div>
+      <div class="bar-chart-section" id="barChartSection"></div>
+
       <div class="refresh-note" id="lastUpdated">—</div>
     </main>
 
@@ -1212,12 +1281,14 @@
               <th>Name</th>
               <th>Email</th>
               <th>Store Name</th>
+              <th>Domain</th>
+              <th>Indexed Date</th>
               <th>Replied</th>
               <th>Bounced</th>
             </tr>
           </thead>
           <tbody id="leadsTableBody">
-            <tr><td colspan="7" style="padding:16px;">Loading…</td></tr>
+            <tr><td colspan="9" style="padding:16px;">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1346,7 +1417,9 @@
     const COLUMN_MAP = {
       name: ['name'],
       email: ['email', 'businessemail', 'contactemail'],
-      storeName: ['storename', 'store', 'shopname', 'company', 'shop']
+      storeName: ['storename', 'store', 'shopname', 'company', 'shop'],
+      domain: ['domain', 'website', 'url'],
+      indexedDate: ['indexeddate', 'dateindexed', 'indexed']
     };
 
     function normalizeHeader(h) {
@@ -1366,14 +1439,18 @@
         return null;
       }
 
-      const nameCol  = findColumn(COLUMN_MAP.name);
-      const emailCol = findColumn(COLUMN_MAP.email);
-      const storeCol = findColumn(COLUMN_MAP.storeName);
+      const nameCol        = findColumn(COLUMN_MAP.name);
+      const emailCol       = findColumn(COLUMN_MAP.email);
+      const storeCol       = findColumn(COLUMN_MAP.storeName);
+      const domainCol      = findColumn(COLUMN_MAP.domain);
+      const indexedDateCol = findColumn(COLUMN_MAP.indexedDate);
 
       return rows.map((row) => ({
         name: nameCol ? row[nameCol] : '',
         email: emailCol ? row[emailCol] : '',
-        storeName: storeCol ? row[storeCol] : ''
+        storeName: storeCol ? row[storeCol] : '',
+        domain: domainCol ? row[domainCol] : '',
+        indexedDate: indexedDateCol ? row[indexedDateCol] : ''
       }));
     }
 
@@ -1514,7 +1591,7 @@
 
     async function loadLeads() {
       const body = document.getElementById('leadsTableBody');
-      body.innerHTML = `<tr><td colspan="7" style="padding:16px;">Loading…</td></tr>`;
+      body.innerHTML = `<tr><td colspan="9" style="padding:16px;">Loading…</td></tr>`;
       try {
         const account = currentAccount();
         const params = new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: LEADS_FETCH_SIZE });
@@ -1523,7 +1600,7 @@
         if (data.error) throw new Error(data.error);
         renderLeads(data);
       } catch (e) {
-        body.innerHTML = `<tr><td colspan="7" style="padding:16px;">Could not load leads: ${e.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" style="padding:16px;">Could not load leads: ${e.message}</td></tr>`;
       }
     }
 
@@ -1532,7 +1609,7 @@
       body.innerHTML = '';
 
       if (!data.leads.length) {
-        body.innerHTML = `<tr><td colspan="7" style="padding:16px;">No leads yet on this account.</td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" style="padding:16px;">No leads yet on this account.</td></tr>`;
       }
 
       data.leads.forEach((lead, i) => {
@@ -1543,6 +1620,8 @@
           <td><input type="text" data-field="name" value="${escapeAttr(lead.name)}"></td>
           <td><input type="text" data-field="email" value="${escapeAttr(lead.email)}"></td>
           <td><input type="text" data-field="storeName" value="${escapeAttr(lead.storeName)}"></td>
+          <td><input type="text" data-field="domain" value="${escapeAttr(lead.domain)}"></td>
+          <td><input type="text" data-field="indexedDate" value="${escapeAttr(lead.indexedDate)}"></td>
           <td class="checkbox-cell"><input type="checkbox" class="readonly-check" ${lead.replied ? 'checked' : ''}></td>
           <td class="checkbox-cell"><input type="checkbox" class="readonly-check" ${lead.bounced ? 'checked' : ''}></td>
         `;
@@ -1713,6 +1792,51 @@
         if (progress < 1) requestAnimationFrame(tick);
       }
       requestAnimationFrame(tick);
+    }
+
+    function renderBarChart(results) {
+      const section = document.getElementById('barChartSection');
+      const valid = results.filter((r) => !r.error);
+
+      if (!valid.length) {
+        section.innerHTML = `<div class="log-state log-state-empty">No account data to compare yet.</div>`;
+        return;
+      }
+
+      const rows = valid.map((r) => {
+        const lt = r.data.lifetime || {};
+        const sent = lt.sent || 0;
+        const replied = lt.replied || 0;
+        const bounced = lt.bounced || 0;
+        const noResponse = Math.max(0, sent - replied - bounced);
+        const label = r.data.account || r.account.label;
+
+        const repliedPct = sent > 0 ? (replied / sent) * 100 : 0;
+        const noResponsePct = sent > 0 ? (noResponse / sent) * 100 : 0;
+        const bouncedPct = sent > 0 ? (bounced / sent) * 100 : 0;
+
+        return `
+          <div class="bar-row">
+            <div class="bar-row-label">
+              <span>${r.account.label}${label !== r.account.label ? ' · ' + label : ''}</span>
+              <strong>${sent} sent</strong>
+            </div>
+            <div class="bar-track">
+              <div class="bar-seg replied" style="width:${repliedPct}%;" title="${replied} replied"></div>
+              <div class="bar-seg noresponse" style="width:${noResponsePct}%;" title="${noResponse} no response"></div>
+              <div class="bar-seg bounced" style="width:${bouncedPct}%;" title="${bounced} bounced"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      section.innerHTML = rows + `
+        <div class="bar-legend">
+          <span><span class="dot" style="background:var(--clover);"></span>Replied</span>
+          <span><span class="dot" style="background:var(--text-dim); opacity:0.4;"></span>No response yet</span>
+          <span><span class="dot" style="background:var(--danger);"></span>Bounced</span>
+        </div>
+      `;
     }
 
     function renderDonut(sent, replied, bounced, waiting) {
@@ -1944,6 +2068,7 @@
       document.getElementById('lifeBounceRate').textContent = ltSent > 0 ? ((ltBounced / ltSent) * 100).toFixed(1) + '%' : '—';
       animateNumber(document.getElementById('fleetWaiting'), totalWaiting);
       renderDonut(ltSent, ltReplied, ltBounced, totalWaiting);
+      renderBarChart(lastResults);
 
       document.getElementById('accountCountLabel').textContent = `(${okCount}/${ACCOUNTS.length} online)`;
 
