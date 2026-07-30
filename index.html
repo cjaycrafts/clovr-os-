@@ -1838,6 +1838,8 @@
         statusLabel = 'Cooling';
       }
 
+      const warmup = data.warmup || { active: false };
+
       div.innerHTML = `
         <div class="mini-gauge-wrap" title="Tap to ${paused ? 'resume' : 'pause'} this account">
           ${miniGaugeSvg(remaining, 100, paused)}
@@ -1851,8 +1853,12 @@
           <div class="row2">
             <span><strong>${waiting}</strong> waiting</span>
             <span><strong>${lt.sent ?? 0}</strong> lifetime sent</span>
+            ${warmup.active ? `<span style="color:var(--info);">🌱 Day ${warmup.day} · cap ${warmup.capToday}/day</span>` : ''}
           </div>
-          <div class="tap-hint">Tap ring to ${paused ? 'resume' : 'pause'} · <span class="run-btn" style="text-decoration:underline; cursor:pointer;">run now</span></div>
+          <div class="tap-hint">
+            Tap ring to ${paused ? 'resume' : 'pause'} · <span class="run-btn" style="text-decoration:underline; cursor:pointer;">run now</span>
+            ${!warmup.active ? ` · <span class="warmup-btn" style="text-decoration:underline; cursor:pointer;">mark as new</span>` : ''}
+          </div>
         </div>
       `;
 
@@ -1881,6 +1887,21 @@
           showToast(`${account.label}: run failed`);
         }
       });
+
+      const warmupBtn = div.querySelector('.warmup-btn');
+      if (warmupBtn) {
+        warmupBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Mark ${account.label} as a brand-new account? This starts a 9-day warm-up ramp (5\u219210\u219220\u219250\u2192100/day). Only do this for accounts that have never sent before.`)) return;
+          try {
+            await callApiForPost(account, 'markNewAccount', {});
+            showToast(`${account.label}: warm-up started`);
+            await loadStatus();
+          } catch (err) {
+            showToast(`${account.label}: could not start warm-up`);
+          }
+        });
+      }
 
       return div;
     }
