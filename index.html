@@ -471,44 +471,73 @@
     box-shadow: 0 4px 12px rgba(60,40,20,0.07);
   }
 
-  .bar-row {
-    margin-bottom: 14px;
+  .bar-chart-scroll {
+    overflow-x: auto;
+    padding-bottom: 4px;
   }
 
-  .bar-row:last-child { margin-bottom: 0; }
-
-  .bar-row-label {
+  .bar-chart-plot {
     display: flex;
-    justify-content: space-between;
-    font-size: 11px;
+    align-items: flex-end;
+    gap: 22px;
+    height: 160px;
+    min-width: max-content;
+    padding: 0 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .bar-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .bar-group-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 140px;
+  }
+
+  .bar-col {
+    width: 16px;
+    border-radius: 3px 3px 0 0;
+    position: relative;
+    transition: height 0.6s ease;
+    min-height: 2px;
+  }
+
+  .bar-col.replied { background: var(--clover); }
+  .bar-col.bounced { background: var(--danger); }
+
+  .bar-col-value {
+    position: absolute;
+    top: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px;
     font-family: var(--font-mono);
     color: var(--text-dim);
-    margin-bottom: 5px;
+    white-space: nowrap;
   }
 
-  .bar-row-label strong { color: var(--text); }
-
-  .bar-track {
-    display: flex;
-    height: 14px;
-    border-radius: 7px;
+  .bar-group-label {
+    margin-top: 8px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    max-width: 60px;
+    text-align: center;
     overflow: hidden;
-    background: var(--surface-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-
-  .bar-seg {
-    height: 100%;
-    transition: width 0.6s ease;
-  }
-
-  .bar-seg.replied { background: var(--clover); }
-  .bar-seg.noresponse { background: var(--text-dim); opacity: 0.4; }
-  .bar-seg.bounced { background: var(--danger); }
 
   .bar-legend {
     display: flex;
     gap: 16px;
-    margin-top: 12px;
+    margin-top: 14px;
     padding-top: 12px;
     border-top: 1px solid var(--border);
     font-size: 11px;
@@ -1261,7 +1290,15 @@
       <div id="accountList"></div>
 
       <div class="section-label">Accounts compared</div>
-      <div class="bar-chart-section" id="barChartSection"></div>
+      <div class="bar-chart-section">
+        <div class="bar-chart-scroll">
+          <div class="bar-chart-plot" id="barChartPlot"></div>
+        </div>
+        <div class="bar-legend">
+          <span><span class="dot" style="background:var(--clover);"></span>Replied</span>
+          <span><span class="dot" style="background:var(--danger);"></span>Bounced</span>
+        </div>
+      </div>
 
       <div class="refresh-note" id="lastUpdated">—</div>
     </main>
@@ -1795,48 +1832,45 @@
     }
 
     function renderBarChart(results) {
-      const section = document.getElementById('barChartSection');
+      const plot = document.getElementById('barChartPlot');
       const valid = results.filter((r) => !r.error);
 
       if (!valid.length) {
-        section.innerHTML = `<div class="log-state log-state-empty">No account data to compare yet.</div>`;
+        plot.innerHTML = `<div class="log-state log-state-empty" style="align-self:center;">No account data to compare yet.</div>`;
         return;
       }
 
-      const rows = valid.map((r) => {
+      // Shared scale across every account/bar so heights are comparable —
+      // works the same whether there are 11 accounts or 30.
+      let maxValue = 1;
+      valid.forEach((r) => {
         const lt = r.data.lifetime || {};
-        const sent = lt.sent || 0;
+        maxValue = Math.max(maxValue, lt.replied || 0, lt.bounced || 0);
+      });
+
+      const MAX_PX = 140;
+
+      plot.innerHTML = valid.map((r) => {
+        const lt = r.data.lifetime || {};
         const replied = lt.replied || 0;
         const bounced = lt.bounced || 0;
-        const noResponse = Math.max(0, sent - replied - bounced);
-        const label = r.data.account || r.account.label;
-
-        const repliedPct = sent > 0 ? (replied / sent) * 100 : 0;
-        const noResponsePct = sent > 0 ? (noResponse / sent) * 100 : 0;
-        const bouncedPct = sent > 0 ? (bounced / sent) * 100 : 0;
+        const repliedH = Math.max(2, (replied / maxValue) * MAX_PX);
+        const bouncedH = Math.max(2, (bounced / maxValue) * MAX_PX);
 
         return `
-          <div class="bar-row">
-            <div class="bar-row-label">
-              <span>${r.account.label}${label !== r.account.label ? ' · ' + label : ''}</span>
-              <strong>${sent} sent</strong>
+          <div class="bar-group">
+            <div class="bar-group-bars">
+              <div class="bar-col replied" style="height:${repliedH}px;">
+                <span class="bar-col-value">${replied}</span>
+              </div>
+              <div class="bar-col bounced" style="height:${bouncedH}px;">
+                <span class="bar-col-value">${bounced}</span>
+              </div>
             </div>
-            <div class="bar-track">
-              <div class="bar-seg replied" style="width:${repliedPct}%;" title="${replied} replied"></div>
-              <div class="bar-seg noresponse" style="width:${noResponsePct}%;" title="${noResponse} no response"></div>
-              <div class="bar-seg bounced" style="width:${bouncedPct}%;" title="${bounced} bounced"></div>
-            </div>
+            <div class="bar-group-label">${r.account.label}</div>
           </div>
         `;
       }).join('');
-
-      section.innerHTML = rows + `
-        <div class="bar-legend">
-          <span><span class="dot" style="background:var(--clover);"></span>Replied</span>
-          <span><span class="dot" style="background:var(--text-dim); opacity:0.4;"></span>No response yet</span>
-          <span><span class="dot" style="background:var(--danger);"></span>Bounced</span>
-        </div>
-      `;
     }
 
     function renderDonut(sent, replied, bounced, waiting) {
