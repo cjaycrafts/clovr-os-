@@ -1233,6 +1233,7 @@
         <label class="file-input-label" id="fileLabel" for="fileInput">Tap to choose a CSV or Excel file</label>
         <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
         <select id="importTargetSelect" style="width:100%; padding:10px; margin-bottom:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;"></select>
+        <select id="sheetTabSelect" class="hidden" style="width:100%; padding:10px; margin-bottom:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;"></select>
         <button class="btn-primary" id="importBtn" disabled>Select a file first</button>
         <div class="import-summary" id="importSummary"></div>
       </div>
@@ -1530,6 +1531,38 @@
       `;
     }
 
+    let currentWorkbook = null;
+
+    function handleParsed(rawRows) {
+      const result = mapRowsToLeads(rawRows);
+      parsedRows = result.leads;
+
+      if (!result.detected) {
+        importSummary.innerHTML = `<div class="log-state log-state-error">File appears empty or unreadable.</div>`;
+        return;
+      }
+
+      importSummary.innerHTML = renderDetectionSummary(result);
+
+      if (!result.detected.name || !result.detected.email || !result.detected.storeName) {
+        importBtn.disabled = true;
+        importBtn.textContent = 'Fix column names first';
+      } else {
+        importBtn.disabled = false;
+        importBtn.textContent = `Import ${parsedRows.length} leads`;
+      }
+    }
+
+    function parseWorkbookSheet(wb, sheetIndex) {
+      const sheet = wb.Sheets[wb.SheetNames[sheetIndex]];
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      handleParsed(json);
+    }
+
+    document.getElementById('sheetTabSelect').addEventListener('change', (e) => {
+      if (currentWorkbook) parseWorkbookSheet(currentWorkbook, parseInt(e.target.value));
+    });
+
     fileInput.addEventListener('change', () => {
       const file = fileInput.files[0];
       if (!file) return;
@@ -1540,27 +1573,8 @@
 
       const ext = file.name.split('.').pop().toLowerCase();
 
-      function handleParsed(rawRows) {
-        const result = mapRowsToLeads(rawRows);
-        parsedRows = result.leads;
-
-        if (!result.detected) {
-          importSummary.innerHTML = `<div class="log-state log-state-error">File appears empty or unreadable.</div>`;
-          return;
-        }
-
-        importSummary.innerHTML = renderDetectionSummary(result);
-
-        if (!result.detected.name || !result.detected.email || !result.detected.storeName) {
-          importBtn.disabled = true;
-          importBtn.textContent = 'Fix column names first';
-        } else {
-          importBtn.disabled = false;
-          importBtn.textContent = `Import ${parsedRows.length} leads`;
-        }
-      }
-
       if (ext === 'csv') {
+        document.getElementById('sheetTabSelect').classList.add('hidden');
         Papa.parse(file, {
           header: true,
           skipEmptyLines: true,
@@ -1570,9 +1584,25 @@
         const reader = new FileReader();
         reader.onload = (e) => {
           const wb = XLSX.read(e.target.result, { type: 'array' });
-          const sheet = wb.Sheets[wb.SheetNames[0]];
-          const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-          handleParsed(json);
+          currentWorkbook = wb;
+
+          const sheetSelect = document.getElementById('sheetTabSelect');
+          if (wb.SheetNames.length > 1) {
+            // Prefer a tab literally named "Email" (case-insensitive) since
+            // this system only handles email outreach — your exports always
+            // have separate tabs per channel (Email, WhatsApp, Instagram...).
+            const emailIdx = wb.SheetNames.findIndex((n) => n.toLowerCase() === 'email');
+            const defaultIdx = emailIdx !== -1 ? emailIdx : 0;
+
+            sheetSelect.innerHTML = wb.SheetNames.map((name, i) =>
+              `<option value="${i}" ${i === defaultIdx ? 'selected' : ''}>${name}${i === emailIdx ? ' (auto-detected)' : ''}</option>`
+            ).join('');
+            sheetSelect.classList.remove('hidden');
+            parseWorkbookSheet(wb, defaultIdx);
+          } else {
+            sheetSelect.classList.add('hidden');
+            parseWorkbookSheet(wb, 0);
+          }
         };
         reader.readAsArrayBuffer(file);
       }
