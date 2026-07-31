@@ -1315,6 +1315,11 @@
       </div>
       <div id="duplicateScanResults"></div>
 
+      <div class="leads-toolbar">
+        <button class="mini-btn" id="viewBatchesBtn" style="flex:1;">Import history</button>
+      </div>
+      <div id="importBatchesResults"></div>
+
       <div class="sheet-wrap">
         <table class="sheet">
           <thead>
@@ -1874,6 +1879,56 @@
         loadLeads();
       } catch (e) {
         showToast('Delete failed: ' + e.message);
+      }
+    });
+
+    document.getElementById('viewBatchesBtn').addEventListener('click', async () => {
+      const resultsEl = document.getElementById('importBatchesResults');
+      resultsEl.innerHTML = `<div class="log-state log-state-empty">Loading import history…</div>`;
+
+      try {
+        const account = currentAccount();
+        const params = new URLSearchParams({ action: 'importBatches', token: TOKEN });
+        const res = await fetch(`${account.url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        if (!data.batches.length) {
+          resultsEl.innerHTML = `<div class="log-state log-state-empty">No imports recorded yet on this account.</div>`;
+          return;
+        }
+
+        resultsEl.innerHTML = data.batches.map((b) => {
+          const when = new Date(b.timestamp).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          return `
+            <div class="account-card" style="align-items:center;">
+              <div class="account-card-body">
+                <div class="row1">
+                  <span class="acc-name">${when}</span>
+                </div>
+                <div class="row2"><span><strong>${b.count}</strong> lead(s) in this import</span></div>
+              </div>
+              <button class="mini-btn batch-delete-btn" data-ts="${b.timestamp}" style="flex:0 0 auto; color:var(--danger);">Delete batch</button>
+            </div>
+          `;
+        }).join('');
+
+        resultsEl.querySelectorAll('.batch-delete-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const ts = btn.dataset.ts;
+            if (!confirm(`Delete this entire import batch? This can't be undone.`)) return;
+            try {
+              await callApiForPost(currentAccount(), 'deleteImportBatch', { timestamp: ts });
+              showToast('Import batch deleted');
+              document.getElementById('viewBatchesBtn').click(); // refresh the list
+              loadLeads();
+            } catch (e) {
+              showToast('Delete failed: ' + e.message);
+            }
+          });
+        });
+      } catch (e) {
+        resultsEl.innerHTML = `<div class="log-state log-state-error">Could not load import history: ${e.message}</div>`;
       }
     });
 
