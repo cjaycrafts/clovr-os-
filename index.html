@@ -1226,6 +1226,7 @@
       <button class="tab-btn active" id="tabOverviewBtn">Overview</button>
       <button class="tab-btn" id="tabLeadsBtn">Leads</button>
       <button class="tab-btn" id="tabActivityBtn">Activity</button>
+      <button class="tab-btn" id="tabAccountsBtn">Accounts</button>
     </div>
 
     <main id="overviewView">
@@ -1354,6 +1355,18 @@
       <div class="account-tabs" id="activityAccountTabs"></div>
     </main>
 
+    <main id="accountsView" class="hidden">
+      <div class="import-card" style="text-align:left;">
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:12px; line-height:1.6;">
+          Add, edit, or remove accounts here instead of editing files on GitHub. The password must already be set to the same value in every account's <code>WebApp.gs</code> via <code>setDashboardPassword()</code> — this screen only manages labels and URLs, not passwords.
+        </div>
+        <div id="accountsEditList"></div>
+        <button class="mini-btn" id="addAccountBtn" style="width:100%; margin-top:10px;">+ Add account</button>
+        <button class="btn-primary" id="saveAccountsBtn" style="margin-top:14px;">Save changes</button>
+        <div id="accountsSaveMsg" style="margin-top:10px; font-size:12px;"></div>
+      </div>
+    </main>
+
     <div class="action-bar">
       <button class="action-btn" id="refreshBtn">Refresh all</button>
       <button class="action-btn primary" id="runAllBtn">Run all now</button>
@@ -1368,7 +1381,7 @@
     // via setDashboardPassword() in EVERY one of these 11 Apps Script
     // projects, so a single login here works across all of them.
     // ================================================
-    const ACCOUNTS = [
+    let ACCOUNTS = [
       { label: "Account 1", url: "https://script.google.com/macros/s/AKfycbzL-t1vi0oa9BVCmUVzXCC7fSzBh1r-ggV0YVDnodtfdrpjHxUr_zM19YHZ6x2fGWo5/exec" },
       { label: "Account 2", url: "EXEC_URL_2" },
       { label: "Account 3", url: "EXEC_URL_3" },
@@ -1381,6 +1394,24 @@
       { label: "Account 10", url: "EXEC_URL_10" },
       { label: "Account 11", url: "EXEC_URL_11" }
     ];
+
+    // If accounts were ever edited from the Accounts tab, that version wins
+    // over the defaults baked into this file. Falls back silently to the
+    // defaults above if nothing's been saved yet, or if the saved data is
+    // ever corrupted/unreadable.
+    try {
+      const saved = localStorage.getItem('clovr_accounts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length) ACCOUNTS = parsed;
+      }
+    } catch (e) {
+      // ignore — keep the defaults above
+    }
+
+    function saveAccountsToStorage() {
+      localStorage.setItem('clovr_accounts', JSON.stringify(ACCOUNTS));
+    }
 
     // ================================================
     // Auth
@@ -1734,9 +1765,11 @@
     const tabOverviewBtn = document.getElementById('tabOverviewBtn');
     const tabLeadsBtn    = document.getElementById('tabLeadsBtn');
     const tabActivityBtn = document.getElementById('tabActivityBtn');
+    const tabAccountsBtn = document.getElementById('tabAccountsBtn');
     const overviewView   = document.getElementById('overviewView');
     const leadsView      = document.getElementById('leadsView');
     const activityView   = document.getElementById('activityView');
+    const accountsView   = document.getElementById('accountsView');
 
     function triggerFadeIn(el) {
       el.classList.remove('fade-in');
@@ -1745,8 +1778,8 @@
     }
 
     function activateTab(activeBtn, activeView) {
-      [tabOverviewBtn, tabLeadsBtn, tabActivityBtn].forEach((b) => b.classList.remove('active'));
-      [overviewView, leadsView, activityView].forEach((v) => v.classList.add('hidden'));
+      [tabOverviewBtn, tabLeadsBtn, tabActivityBtn, tabAccountsBtn].forEach((b) => b.classList.remove('active'));
+      [overviewView, leadsView, activityView, accountsView].forEach((v) => v.classList.add('hidden'));
       activeBtn.classList.add('active');
       activeView.classList.remove('hidden');
       triggerFadeIn(activeView);
@@ -1764,6 +1797,11 @@
     tabActivityBtn.addEventListener('click', () => {
       activateTab(tabActivityBtn, activityView);
       if (!activityBooted) bootActivityView();
+    });
+
+    tabAccountsBtn.addEventListener('click', () => {
+      activateTab(tabAccountsBtn, accountsView);
+      renderAccountsEditor();
     });
 
     // ================================================
@@ -1995,6 +2033,61 @@
     // ================================================
     let activityBooted = false;
     let activityAccountIndex = 0;
+
+    // ================================================
+    // Accounts management — add/edit/remove without touching GitHub
+    // ================================================
+    function renderAccountsEditor() {
+      const list = document.getElementById('accountsEditList');
+      list.innerHTML = ACCOUNTS.map((acc, i) => `
+        <div class="account-card" style="align-items:center; margin-bottom:8px;">
+          <div class="account-card-body" style="display:flex; flex-direction:column; gap:6px;">
+            <input type="text" class="lr-field" data-idx="${i}" data-field="label" value="${escapeAttr(acc.label)}" placeholder="Label, e.g. Account 12" style="font-weight:600;">
+            <input type="text" class="lr-field" data-idx="${i}" data-field="url" value="${escapeAttr(acc.url)}" placeholder="https://script.google.com/macros/s/.../exec">
+          </div>
+          <button class="mini-btn remove-account-btn" data-idx="${i}" style="flex:0 0 auto; color:var(--danger);">Remove</button>
+        </div>
+      `).join('');
+
+      list.querySelectorAll('.remove-account-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx);
+          if (!confirm(`Remove ${ACCOUNTS[idx].label} from the dashboard? This only stops the dashboard from showing it — it does NOT delete anything on that Gmail account or in Apps Script.`)) return;
+          ACCOUNTS.splice(idx, 1);
+          renderAccountsEditor();
+        });
+      });
+    }
+
+    document.getElementById('addAccountBtn').addEventListener('click', () => {
+      ACCOUNTS.push({ label: `Account ${ACCOUNTS.length + 1}`, url: '' });
+      renderAccountsEditor();
+    });
+
+    document.getElementById('saveAccountsBtn').addEventListener('click', () => {
+      // Pull current values straight from the input fields before saving,
+      // since ACCOUNTS itself isn't updated live as you type.
+      document.querySelectorAll('#accountsEditList .lr-field').forEach((el) => {
+        const idx = parseInt(el.dataset.idx);
+        const field = el.dataset.field;
+        if (ACCOUNTS[idx]) ACCOUNTS[idx][field] = el.value.trim();
+      });
+
+      saveAccountsToStorage();
+
+      // Refresh everything that was built from the old ACCOUNTS list.
+      const importSelect = document.getElementById('importTargetSelect');
+      importSelect.innerHTML =
+        ACCOUNTS.map((a, i) => `<option value="${i}">Import to ${a.label}</option>`).join('') +
+        `<option value="distribute">Distribute evenly across all accounts</option>`;
+
+      leadsBooted = false;
+      activityBooted = false;
+
+      document.getElementById('accountsSaveMsg').innerHTML = `<span style="color:var(--clover);">Saved — reload the page for every tab to pick up the change cleanly.</span>`;
+      showToast('Accounts saved');
+      loadStatus();
+    });
 
     function bootActivityView() {
       activityBooted = true;
