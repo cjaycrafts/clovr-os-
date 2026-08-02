@@ -1321,6 +1321,17 @@
       </div>
       <div id="importBatchesResults"></div>
 
+      <div class="import-card" style="text-align:left; margin-top:10px;">
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:10px;">Follow-ups for <strong id="followupAccountLabel" style="color:var(--text);"></strong> — Follow-up 2 requires Follow-up 1 to be on first.</div>
+        <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:13px;">
+          <input type="checkbox" id="followup1Toggle"> Follow-up 1 (4 days after initial)
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:13px;">
+          <input type="checkbox" id="followup2Toggle"> Follow-up 2 (10 days after Follow-up 1)
+        </label>
+        <button class="btn-primary" id="saveFollowupBtn">Save follow-up settings</button>
+      </div>
+
       <div class="sheet-wrap">
         <table class="sheet">
           <thead>
@@ -1824,11 +1835,45 @@
           btn.classList.add('active');
           currentAccountIndex = parseInt(btn.dataset.idx);
           loadLeads();
+          loadFollowupSettings();
         });
       });
 
       loadLeads();
+      loadFollowupSettings();
     }
+
+    async function loadFollowupSettings() {
+      document.getElementById('followupAccountLabel').textContent = currentAccount().label;
+      try {
+        const params = new URLSearchParams({ action: 'followupSettings', token: TOKEN });
+        const res = await fetch(`${currentAccount().url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        document.getElementById('followup1Toggle').checked = data.followup1Enabled;
+        document.getElementById('followup2Toggle').checked = data.followup2Enabled;
+      } catch (e) {
+        showToast('Could not load follow-up settings: ' + e.message);
+      }
+    }
+
+    document.getElementById('followup2Toggle').addEventListener('change', (e) => {
+      // Follow-up 2 can't be on without Follow-up 1 — enforce it in the UI too
+      if (e.target.checked && !document.getElementById('followup1Toggle').checked) {
+        document.getElementById('followup1Toggle').checked = true;
+      }
+    });
+
+    document.getElementById('saveFollowupBtn').addEventListener('click', async () => {
+      const followup1Enabled = document.getElementById('followup1Toggle').checked;
+      const followup2Enabled = document.getElementById('followup2Toggle').checked;
+      try {
+        await callApiForPost(currentAccount(), 'setFollowupSettings', { followup1Enabled, followup2Enabled });
+        showToast('Follow-up settings saved');
+      } catch (e) {
+        showToast('Save failed: ' + e.message);
+      }
+    });
 
     function currentAccount() {
       return ACCOUNTS[currentAccountIndex];
