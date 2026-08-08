@@ -1505,8 +1505,56 @@
     function enterApp() {
       authGate.classList.add('hidden');
       app.classList.remove('hidden');
-      loadStatus();
+      syncAccountsFromRemote().finally(() => loadStatus());
     }
+
+    // Pulls the shared account list from Account 1's backend, so edits made
+    // on ANY device (phone, PC, whatever) show up on every other device —
+    // not just the one where "Save changes" was clicked. Falls back
+    // silently to whatever's already loaded (local defaults + local
+    // storage) if Account 1 is unreachable or nothing's been saved there
+    // yet — this never blocks the app from loading.
+    async function syncAccountsFromRemote() {
+      try {
+        const params = new URLSearchParams({ action: 'getAccountsList', token: TOKEN });
+        const res = await fetch(`${ACCOUNTS[0].url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error || !data.accounts || !Array.isArray(data.accounts) || !data.accounts.length) return;
+
+        // Same placeholder-aware merge as the local-storage logic: only let
+        // the remote version win for accounts that actually have a real URL.
+        ACCOUNTS = ACCOUNTS.map((localAcc, i) => {
+          const remoteAcc = data.accounts[i];
+          if (!remoteAcc) return localAcc;
+          const remoteIsPlaceholder = !remoteAcc.url || remoteAcc.url.indexOf('EXEC_URL_') === 0;
+          return remoteIsPlaceholder ? localAcc : remoteAcc;
+        });
+        if (data.accounts.length > ACCOUNTS.length) {
+          ACCOUNTS = ACCOUNTS.concat(data.accounts.slice(ACCOUNTS.length));
+        }
+
+        // Keep local storage in step too, so this device stays consistent
+        // even if it's ever offline and can't reach Account 1.
+        saveAccountsToStorage();
+
+        // Anything already built from the old ACCOUNTS list needs a reset
+        // so it picks up the synced version next time it's opened.
+        leadsBooted = false;
+        activityBooted = false;
+        accountsEditorBooted = false;
+
+        const importSelect = document.getElementById('importTargetSelect');
+        if (importSelect) {
+          importSelect.innerHTML =
+            ACCOUNTS.map((a, i) => `<option value="${i}">Import to ${a.label}</option>`).join('') +
+            `<option value="distribute">Distribute evenly across all accounts</option>`;
+        }
+      } catch (e) {
+        // Account 1 unreachable, or nothing saved remotely yet — fine,
+        // just keep using whatever's already loaded locally.
+      }
+    }
+
 
     // ================================================
     // Lead import — parses CSV/XLSX client-side, maps columns, POSTs
@@ -2129,7 +2177,7 @@
       renderAccountsEditor();
     });
 
-    document.getElementById('saveAccountsBtn').addEventListener('click', () => {
+    document.getElementById('saveAccountsBtn').addEventListener('click', async () => {
       // Pull current values straight from the input fields before saving,
       // since ACCOUNTS itself isn't updated live as you type.
       document.querySelectorAll('#accountsEditList .lr-field').forEach((el) => {
@@ -2149,9 +2197,20 @@
       leadsBooted = false;
       activityBooted = false;
 
-      document.getElementById('accountsSaveMsg').innerHTML = `<span style="color:var(--clover);">Saved — reload the page for every tab to pick up the change cleanly.</span>`;
+      const msgEl = document.getElementById('accountsSaveMsg');
+      msgEl.innerHTML = `<span style="color:var(--clover);">Saved locally — syncing to your other devices…</span>`;
       showToast('Accounts saved');
       loadStatus();
+
+      // Push to Account 1's backend so this shows up on every device, not
+      // just this browser. If Account 1 itself is unreachable, the local
+      // save above still holds — this device just won't sync out.
+      try {
+        await callApiForPost(ACCOUNTS[0], 'saveAccountsList', { accounts: ACCOUNTS });
+        msgEl.innerHTML = `<span style="color:var(--clover);">Saved and synced to all your devices.</span>`;
+      } catch (e) {
+        msgEl.innerHTML = `<span style="color:var(--amber);">Saved on this device, but couldn't sync to others right now (${e.message}). It'll sync next time you save with Account 1 reachable.</span>`;
+      }
     });
 
     function bootActivityView() {
