@@ -1332,6 +1332,19 @@
         <button class="btn-primary" id="saveFollowupBtn">Save follow-up settings</button>
       </div>
 
+      <div class="leads-toolbar">
+        <input type="text" id="leadsSearchInput" placeholder="Search name, email, store, or domain…" style="flex:1; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;">
+        <select id="leadsStatusFilter" style="padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;">
+          <option value="all">All statuses</option>
+          <option value="waiting">Waiting to send</option>
+          <option value="sent_no_response">Sent — no response</option>
+          <option value="replied">Replied</option>
+          <option value="bounced">Bounced</option>
+          <option value="followup1">Follow-up 1 sent</option>
+          <option value="followup2">Follow-up 2 sent</option>
+        </select>
+      </div>
+
       <div class="sheet-wrap">
         <table class="sheet">
           <thead>
@@ -1394,16 +1407,16 @@
     // ================================================
     let ACCOUNTS = [
       { label: "Account 1", url: "https://script.google.com/macros/s/AKfycbzL-t1vi0oa9BVCmUVzXCC7fSzBh1r-ggV0YVDnodtfdrpjHxUr_zM19YHZ6x2fGWo5/exec" },
-      { label: "Account 2", url: "https://script.google.com/macros/s/AKfycbxUIn4qDPbjpx2xklxg5ymMyv9-d_7e35Hottu39GLD4Czh3uK4rgdFg_cqSzobREis/exec" },
-      { label: "Account 3", url: "https://script.google.com/macros/s/AKfycbwg866hhtRqdtHFrSjVy3poE56052zvYxPdTbBTJRi-hmPY5mPMQ4pqqMvrOaKcRna7Fw/exec" },
-      { label: "Account 4", url: "https://script.google.com/macros/s/AKfycbyw9uiZ42obOx9szUMtc8_QStxgzzXYMzy71nL76RIRbEnQ1l_Abzr9tWy11wKucZnO/exec" },
-      { label: "Account 5", url: "https://script.google.com/macros/s/AKfycby3NU8sVcz1XjK3k_VLrE4E7-E7orVrieHjqwTdgt139za5BMnd3lCLx5z32W3eV0hP/exec" },
-      { label: "Account 6", url: "https://script.google.com/macros/s/AKfycbw5-7Hwz3wJGINfGiQWNL0z12V9pv1Nn3CmAPiAKTiuU47kVOEjvHnTRG366p5E2_qD/exec" },
-      { label: "Account 7", url: "https://script.google.com/macros/s/AKfycbyKsS_VQEb86x1rijOVwroaYbYy8yKi8KcD486etkLYjplXE3dwxPp7BLW3rIEBjBZL/exec" },
-      { label: "Account 8", url: "https://script.google.com/macros/s/AKfycbyI0Ynkycg73nFnl2XrO_yNrYl62kJ-Rkk7XlewGVYiy6TZhvtcE3KpyuuUycH2L77Q3g/exec" },
-      { label: "Account 9", url: "https://script.google.com/macros/s/AKfycbxmVyEG7Zuf8AQV61ul7oMZhfPyFSsOdsYCg5hzHklMSrckcvTgZ8W0l4_Q_iLLWo3t/exec" },
-      { label: "Account 10", url: "https://script.google.com/macros/s/AKfycbxlu1nO1cwNkXr5fmuF6XLz06ALAZcHyHoH6qxf3lTTJ6iEmiQ0o6eGLCvVV-1m55MG/exec" },
-      { label: "Account 11", url: "https://script.google.com/macros/s/AKfycbxQphaUnxzDZ90Pg6mMBW9vdT_0FyVlLOfPUlrif8AwC8iUfTCKfkPmmPUaVr5L9PFWaQ/exec" }
+      { label: "Account 2", url: "EXEC_URL_2" },
+      { label: "Account 3", url: "EXEC_URL_3" },
+      { label: "Account 4", url: "EXEC_URL_4" },
+      { label: "Account 5", url: "EXEC_URL_5" },
+      { label: "Account 6", url: "EXEC_URL_6" },
+      { label: "Account 7", url: "EXEC_URL_7" },
+      { label: "Account 8", url: "EXEC_URL_8" },
+      { label: "Account 9", url: "EXEC_URL_9" },
+      { label: "Account 10", url: "EXEC_URL_10" },
+      { label: "Account 11", url: "EXEC_URL_11" }
     ];
 
     // If accounts were ever edited from the Accounts tab, that customization
@@ -1947,6 +1960,8 @@
       return ACCOUNTS[currentAccountIndex];
     }
 
+    let allLeads = [];
+
     async function loadLeads() {
       const body = document.getElementById('leadsTableBody');
       body.innerHTML = `<tr><td colspan="9" style="padding:16px;">Loading…</td></tr>`;
@@ -1956,21 +1971,53 @@
         const res = await fetch(`${account.url}?${params.toString()}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        renderLeads(data);
+        allLeads = data.leads;
+        applyLeadsFilter();
       } catch (e) {
         body.innerHTML = `<tr><td colspan="9" style="padding:16px;">Could not load leads: ${e.message}</td></tr>`;
       }
     }
 
-    function renderLeads(data) {
+    function matchesStatus(lead, status) {
+      switch (status) {
+        case 'waiting': return !lead.dateEmailed;
+        case 'sent_no_response': return !!lead.dateEmailed && !lead.replied && !lead.bounced;
+        case 'replied': return lead.replied;
+        case 'bounced': return lead.bounced;
+        case 'followup1': return lead.followup1Sent;
+        case 'followup2': return lead.followup2Sent;
+        default: return true; // 'all'
+      }
+    }
+
+    function applyLeadsFilter() {
+      const searchTerm = document.getElementById('leadsSearchInput').value.trim().toLowerCase();
+      const status = document.getElementById('leadsStatusFilter').value;
+
+      const filtered = allLeads.filter((lead) => {
+        const matchesSearch = !searchTerm ||
+          (lead.name || '').toLowerCase().includes(searchTerm) ||
+          (lead.email || '').toLowerCase().includes(searchTerm) ||
+          (lead.storeName || '').toLowerCase().includes(searchTerm) ||
+          (lead.domain || '').toLowerCase().includes(searchTerm);
+        return matchesSearch && matchesStatus(lead, status);
+      });
+
+      renderLeads(filtered, allLeads.length);
+    }
+
+    document.getElementById('leadsSearchInput').addEventListener('input', applyLeadsFilter);
+    document.getElementById('leadsStatusFilter').addEventListener('change', applyLeadsFilter);
+
+    function renderLeads(leads, totalCount) {
       const body = document.getElementById('leadsTableBody');
       body.innerHTML = '';
 
-      if (!data.leads.length) {
-        body.innerHTML = `<tr><td colspan="9" style="padding:16px;">No leads yet on this account.</td></tr>`;
+      if (!leads.length) {
+        body.innerHTML = `<tr><td colspan="9" style="padding:16px;">No leads match this filter.</td></tr>`;
       }
 
-      data.leads.forEach((lead, i) => {
+      leads.forEach((lead, i) => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td class="row-num-cell">${i + 1}</td>
@@ -2001,7 +2048,8 @@
         body.appendChild(tr);
       });
 
-      document.getElementById('leadsCountNote').textContent = `${data.totalLeads} lead(s) on this account`;
+      const shownNote = leads.length === totalCount ? `${totalCount} lead(s) on this account` : `${leads.length} of ${totalCount} lead(s) shown`;
+      document.getElementById('leadsCountNote').textContent = shownNote;
     }
 
     function escapeAttr(str) {
@@ -2556,6 +2604,35 @@
         error: r.status === 'rejected' ? r.reason.message : null,
         data: r.status === 'fulfilled' ? r.value : null
       }));
+
+      // Show the real Gmail address instead of "Account N" everywhere,
+      // once we actually know it (from a successful status check). Mutates
+      // the ACCOUNTS objects in place, so every UI piece that reads
+      // account.label — cards, bar chart, tabs, import dropdown — picks
+      // this up automatically without needing a full reload.
+      let labelsChanged = false;
+      lastResults.forEach((r) => {
+        if (!r.error && r.data && r.data.account && r.account.label !== r.data.account) {
+          r.account.label = r.data.account;
+          labelsChanged = true;
+        }
+      });
+      if (labelsChanged) {
+        const importSelect = document.getElementById('importTargetSelect');
+        if (importSelect) {
+          importSelect.innerHTML =
+            ACCOUNTS.map((a, i) => `<option value="${i}">Import to ${a.label}</option>`).join('') +
+            `<option value="distribute">Distribute evenly across all accounts</option>`;
+        }
+        document.querySelectorAll('#accountTabs .account-tab-btn').forEach((btn) => {
+          const idx = parseInt(btn.dataset.idx);
+          if (ACCOUNTS[idx]) btn.textContent = ACCOUNTS[idx].label;
+        });
+        document.querySelectorAll('#activityAccountTabs .account-tab-btn').forEach((btn) => {
+          const idx = parseInt(btn.dataset.idx);
+          if (ACCOUNTS[idx]) btn.textContent = ACCOUNTS[idx].label;
+        });
+      }
 
       // Fleet totals
       let totalRemaining = 0, totalCap = 0;
