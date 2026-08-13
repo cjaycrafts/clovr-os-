@@ -1001,6 +1001,7 @@
   .log-entry.type-import { border-left-color: var(--terracotta); }
   .log-entry.type-delete, .log-entry.type-hard_reset { border-left-color: var(--danger); }
   .log-entry.type-auto_cleanup { border-left-color: var(--text-dim); }
+  .log-entry.type-redistribute_in, .log-entry.type-redistribute_out { border-left-color: var(--terracotta); }
 
   .log-entry-time {
     font-family: var(--font-mono);
@@ -1292,6 +1293,20 @@
       <div class="section-label">Accounts <span id="accountCountLabel"></span></div>
       <div id="accountList"></div>
 
+      <div class="section-label">Redistribute leads</div>
+      <div class="import-card" id="redistributeCard" style="text-align:left;">
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:10px; line-height:1.6;">
+          Pools every <strong style="color:var(--text);">waiting-to-send</strong> lead from the accounts checked below, then splits that pool evenly back across those same checked accounts. Uncheck an account to exclude it entirely — it won't give up leads and won't receive any.
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:14px; margin-bottom:8px; font-size:11px;">
+          <span id="redistributeSelectAll" style="text-decoration:underline; cursor:pointer; color:var(--text-dim);">Select all</span>
+          <span id="redistributeSelectNone" style="text-decoration:underline; cursor:pointer; color:var(--text-dim);">Select none</span>
+        </div>
+        <div id="redistributeAccountList" style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px; max-height:220px; overflow:auto;"></div>
+        <button class="btn-primary" id="redistributeBtn">Redistribute waiting leads</button>
+        <div class="import-summary" id="redistributeSummary"></div>
+      </div>
+
       <div class="section-label">Accounts compared</div>
       <div class="bar-chart-section">
         <div class="bar-chart-scroll">
@@ -1477,63 +1492,10 @@
       setTimeout(() => t.classList.remove('show'), 2200);
     }
 
-    // ================================================
-    // Network resilience helpers
-    // ================================================
-    // Apps Script's /exec endpoint can intermittently return an HTML
-    // "interstitial" page instead of the JSON our doGet/doPost always
-    // produce — this happens inside Google's own infrastructure, before
-    // our script code even runs, and shows up more often the more
-    // concurrent requests hit /exec URLs at once (which is exactly what
-    // happens here: 13 accounts all queried in the same burst). It's not
-    // tied to any specific account — it rotates, because it's about which
-    // request happens to land in that window, not which script it hits.
-    //
-    // sleep() / fetchJsonWithRetry() / postJsonWithRetry() give every
-    // network call in this app a silent, short retry (up to 3 attempts
-    // total) whenever the response isn't valid JSON, before we ever
-    // surface it to the user as a failure.
-    function sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
-    async function fetchJsonWithRetry(url, attempt) {
-      attempt = attempt || 1;
-      const res = await fetch(url);
-      const text = await res.text();
-      try {
-        return JSON.parse(text);
-      } catch (parseErr) {
-        if (attempt < 3) {
-          await sleep(400 * attempt);
-          return fetchJsonWithRetry(url, attempt + 1);
-        }
-        throw new Error('Bad response from server (non-JSON) after ' + attempt + ' attempts');
-      }
-    }
-
-    async function postJsonWithRetry(url, body, attempt) {
-      attempt = attempt || 1;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(body)
-      });
-      const text = await res.text();
-      try {
-        return JSON.parse(text);
-      } catch (parseErr) {
-        if (attempt < 3) {
-          await sleep(400 * attempt);
-          return postJsonWithRetry(url, body, attempt + 1);
-        }
-        throw new Error('Bad response from server (non-JSON) after ' + attempt + ' attempts');
-      }
-    }
-
     async function callApiFor(account, action, extraParams) {
       const params = new URLSearchParams({ action, token: TOKEN, ...(extraParams || {}) });
-      const data = await fetchJsonWithRetry(`${account.url}?${params.toString()}`);
+      const res = await fetch(`${account.url}?${params.toString()}`);
+      const data = await res.json();
       if (data.error) throw new Error(data.error);
       return data;
     }
@@ -1583,7 +1545,8 @@
     async function syncAccountsFromRemote() {
       try {
         const params = new URLSearchParams({ action: 'getAccountsList', token: TOKEN });
-        const data = await fetchJsonWithRetry(`${ACCOUNTS[0].url}?${params.toString()}`);
+        const res = await fetch(`${ACCOUNTS[0].url}?${params.toString()}`);
+        const data = await res.json();
         if (data.error || !data.accounts || !Array.isArray(data.accounts) || !data.accounts.length) return;
 
         // Same placeholder-aware merge as the local-storage logic: only let
@@ -1783,16 +1746,14 @@
       }
     });
 
-    // Fetches every account's existing emails in parallel (staggered), for
-    // the fleet-wide duplicate check. Accounts that fail to respond are
-    // simply skipped for this check (not treated as duplicates).
+    // Fetches every account's existing emails in parallel, for the
+    // fleet-wide duplicate check. Accounts that fail to respond are simply
+    // skipped for this check (not treated as duplicates).
     async function getFleetEmailSet() {
-      const STAGGER_MS = 120;
       const results = await Promise.allSettled(
-        ACCOUNTS.map((acc, i) =>
-          sleep(i * STAGGER_MS).then(() =>
-            fetchJsonWithRetry(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
-          )
+        ACCOUNTS.map((acc) =>
+          fetch(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
+            .then((r) => r.json())
         )
       );
 
@@ -1846,7 +1807,11 @@
 
           const results = await Promise.allSettled(
             validAccounts.map((acc, i) =>
-              callApiForPost(acc, 'importLeads', { leads: chunks[i] })
+              fetch(acc.url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ token: TOKEN, action: 'importLeads', leads: chunks[i] })
+              }).then((r) => r.json())
             )
           );
 
@@ -1866,7 +1831,14 @@
           });
         } else {
           const account = ACCOUNTS[parseInt(target)];
-          combined = await callApiForPost(account, 'importLeads', { leads: deduped });
+          const res = await fetch(account.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ token: TOKEN, action: 'importLeads', leads: deduped })
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          combined = data;
         }
 
         importSummary.innerHTML = `
@@ -1970,7 +1942,10 @@
     async function loadFollowupSettings() {
       document.getElementById('followupAccountLabel').textContent = currentAccount().label;
       try {
-        const data = await callApiFor(currentAccount(), 'followupSettings');
+        const params = new URLSearchParams({ action: 'followupSettings', token: TOKEN });
+        const res = await fetch(`${currentAccount().url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
         document.getElementById('followup1Toggle').checked = data.followup1Enabled;
         document.getElementById('followup2Toggle').checked = data.followup2Enabled;
       } catch (e) {
@@ -2007,7 +1982,10 @@
       body.innerHTML = `<tr><td colspan="9" style="padding:16px;">Loading…</td></tr>`;
       try {
         const account = currentAccount();
-        const data = await callApiFor(account, 'leads', { page: 1, pageSize: LEADS_FETCH_SIZE });
+        const params = new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: LEADS_FETCH_SIZE });
+        const res = await fetch(`${account.url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
         allLeads = data.leads;
         applyLeadsFilter();
       } catch (e) {
@@ -2094,7 +2072,12 @@
     }
 
     async function callApiForPost(account, action, extra) {
-      const data = await postJsonWithRetry(account.url, { token: TOKEN, action, ...extra });
+      const res = await fetch(account.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ token: TOKEN, action, ...extra })
+      });
+      const data = await res.json();
       if (data.error) throw new Error(data.error);
       return data;
     }
@@ -2119,7 +2102,10 @@
 
       try {
         const account = currentAccount();
-        const data = await callApiFor(account, 'importBatches');
+        const params = new URLSearchParams({ action: 'importBatches', token: TOKEN });
+        const res = await fetch(`${account.url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
 
         if (!data.batches.length) {
           resultsEl.innerHTML = `<div class="log-state log-state-empty">No imports recorded yet on this account.</div>`;
@@ -2165,12 +2151,10 @@
       resultsEl.innerHTML = `<div class="log-state log-state-empty">Scanning all accounts…</div>`;
 
       try {
-        const STAGGER_MS = 120;
         const results = await Promise.allSettled(
-          ACCOUNTS.map((acc, i) =>
-            sleep(i * STAGGER_MS).then(() =>
-              fetchJsonWithRetry(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
-            )
+          ACCOUNTS.map((acc) =>
+            fetch(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
+              .then((r) => r.json())
           )
         );
 
@@ -2316,7 +2300,10 @@
       listEl.textContent = 'Loading…';
       try {
         const account = ACCOUNTS[activityAccountIndex];
-        const data = await callApiFor(account, 'activityLog');
+        const params = new URLSearchParams({ action: 'activityLog', token: TOKEN });
+        const res = await fetch(`${account.url}?${params.toString()}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
         renderActivityLog(data.log || []);
       } catch (e) {
         listEl.innerHTML = `<div class="log-state log-state-error">Could not load activity log: ${e.message}</div>`;
@@ -2622,15 +2609,182 @@
       return div;
     }
 
-    // How long to wait between kicking off each account's status request.
-    // Spreads a 13-way burst out over ~1.4s instead of firing everything
-    // in the same tick, which is the main thing that makes Apps Script's
-    // /exec endpoint occasionally hand back an HTML page instead of JSON.
-    const STATUS_FETCH_STAGGER_MS = 120;
+    // ================================================
+    // Redistribute waiting leads — pools "waiting to send" leads from every
+    // CHECKED account and splits that pool evenly back across those same
+    // checked accounts. Leads that already belong on the account they land
+    // on are left untouched; only the ones that actually change hands get
+    // deleted from their source and re-added on their new home, via a
+    // lightweight 'receiveLeads' endpoint that skips MX/duplicate checks
+    // (the lead already passed those once, on its original import).
+    // ================================================
+    let redistributeSelected = new Set(ACCOUNTS.map((_, i) => i));
+    let redistributeKnownCount = ACCOUNTS.length;
+
+    function renderRedistributeChecklist() {
+      const container = document.getElementById('redistributeAccountList');
+      if (!container) return;
+
+      // If the number of configured accounts changed since we last built
+      // this list (added/removed an account), reset to "everyone checked"
+      // rather than guessing which new index maps to what.
+      if (ACCOUNTS.length !== redistributeKnownCount) {
+        redistributeSelected = new Set(ACCOUNTS.map((_, i) => i));
+        redistributeKnownCount = ACCOUNTS.length;
+      }
+
+      container.innerHTML = ACCOUNTS.map((a, i) => `
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
+          <input type="checkbox" class="redistribute-check" data-idx="${i}" ${redistributeSelected.has(i) ? 'checked' : ''}>
+          ${a.label}
+        </label>
+      `).join('');
+
+      container.querySelectorAll('.redistribute-check').forEach((cb) => {
+        cb.addEventListener('change', () => {
+          const idx = parseInt(cb.dataset.idx);
+          if (cb.checked) redistributeSelected.add(idx);
+          else redistributeSelected.delete(idx);
+        });
+      });
+    }
+
+    document.getElementById('redistributeSelectAll').addEventListener('click', () => {
+      redistributeSelected = new Set(ACCOUNTS.map((_, i) => i));
+      renderRedistributeChecklist();
+    });
+
+    document.getElementById('redistributeSelectNone').addEventListener('click', () => {
+      redistributeSelected = new Set();
+      renderRedistributeChecklist();
+    });
+
+    document.getElementById('redistributeBtn').addEventListener('click', async () => {
+      const includedIdx = Array.from(redistributeSelected).sort((a, b) => a - b);
+      const summaryEl = document.getElementById('redistributeSummary');
+      const btn = document.getElementById('redistributeBtn');
+
+      if (includedIdx.length < 2) {
+        summaryEl.innerHTML = `<div class="log-state log-state-empty">Check at least 2 accounts to redistribute between.</div>`;
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Fetching waiting leads…';
+      summaryEl.innerHTML = `<div class="log-state log-state-empty">Pulling waiting leads from ${includedIdx.length} checked account(s)…</div>`;
+
+      try {
+        // 1. Fetch every checked account's leads and keep only the ones
+        //    genuinely still waiting to send (mirrors the 'waiting' filter
+        //    used in the Leads tab).
+        const results = await Promise.allSettled(
+          includedIdx.map((idx) =>
+            fetch(`${ACCOUNTS[idx].url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: LEADS_FETCH_SIZE })}`)
+              .then((r) => r.json())
+          )
+        );
+
+        let pool = [];
+        let fetchFailures = [];
+        results.forEach((r, i) => {
+          const accIdx = includedIdx[i];
+          if (r.status === 'fulfilled' && r.value.leads) {
+            r.value.leads
+              .filter((l) => !l.dateEmailed && !l.replied && !l.bounced)
+              .forEach((l) => pool.push({ ...l, _sourceIdx: accIdx }));
+          } else {
+            fetchFailures.push(ACCOUNTS[accIdx].label);
+          }
+        });
+
+        if (!pool.length) {
+          summaryEl.innerHTML = `<div class="log-state log-state-empty">No waiting leads found on the checked accounts — nothing to redistribute.</div>`;
+          btn.disabled = false;
+          btn.textContent = 'Redistribute waiting leads';
+          return;
+        }
+
+        // 2. Split the pooled leads evenly across the SAME checked accounts.
+        btn.textContent = 'Calculating even split…';
+        const chunks = splitEvenly(pool, includedIdx.length); // chunks[i] -> leads assigned to includedIdx[i]
+
+        // 3. Only leads that land on a DIFFERENT account than they started
+        //    on actually need to move.
+        const toDeleteByAccount = {};
+        const toAddByAccount    = {};
+        includedIdx.forEach((idx) => { toDeleteByAccount[idx] = []; toAddByAccount[idx] = []; });
+
+        chunks.forEach((chunk, ci) => {
+          const targetIdx = includedIdx[ci];
+          chunk.forEach((lead) => {
+            if (lead._sourceIdx !== targetIdx) {
+              toDeleteByAccount[lead._sourceIdx].push(lead.row);
+              toAddByAccount[targetIdx].push({
+                name: lead.name,
+                email: lead.email,
+                storeName: lead.storeName,
+                domain: lead.domain,
+                indexedDate: lead.indexedDate
+              });
+            }
+          });
+        });
+
+        const movedCount = Object.values(toAddByAccount).reduce((sum, arr) => sum + arr.length, 0);
+
+        if (!movedCount) {
+          summaryEl.innerHTML = `<div class="log-state log-state-empty">Checked accounts are already evenly balanced (${pool.length} waiting lead(s) total) — nothing to move.</div>`;
+          btn.disabled = false;
+          btn.textContent = 'Redistribute waiting leads';
+          return;
+        }
+
+        // 4. Apply: delete moved leads from their old account, add them to
+        //    their new one. Batched with a shared timestamp so the move
+        //    shows up as one entry in Import history on the receiving side.
+        btn.textContent = `Moving ${movedCount} lead(s)…`;
+        const batchTimestamp = new Date().toISOString();
+
+        const ops = [];
+        includedIdx.forEach((idx) => {
+          if (toDeleteByAccount[idx].length) {
+            ops.push(
+              callApiForPost(ACCOUNTS[idx], 'deleteLeads', { rows: toDeleteByAccount[idx], reason: 'redistribute' })
+                .then(() => ({ idx, type: 'delete', count: toDeleteByAccount[idx].length }))
+                .catch((e) => ({ idx, type: 'delete', error: e.message }))
+            );
+          }
+          if (toAddByAccount[idx].length) {
+            ops.push(
+              callApiForPost(ACCOUNTS[idx], 'receiveLeads', { leads: toAddByAccount[idx], batchTimestamp })
+                .then(() => ({ idx, type: 'add', count: toAddByAccount[idx].length }))
+                .catch((e) => ({ idx, type: 'add', error: e.message }))
+            );
+          }
+        });
+
+        const opResults = await Promise.all(ops);
+        const failed = opResults.filter((r) => r.error);
+
+        summaryEl.innerHTML = `
+          <span class="accepted">${movedCount} lead(s) redistributed</span> across ${includedIdx.length} checked account(s)
+          ${fetchFailures.length ? `<br><span class="rejected">Could not read from: ${fetchFailures.join(', ')}</span>` : ''}
+          ${failed.length ? `<br><span class="rejected">${failed.length} operation(s) failed — double check those accounts.</span>` : ''}
+        `;
+        showToast('Redistribution complete');
+        loadStatus();
+        if (leadsBooted) loadLeads();
+      } catch (e) {
+        summaryEl.innerHTML = `<div class="log-state log-state-error">Redistribution failed: ${e.message}</div>`;
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Redistribute waiting leads';
+    });
 
     async function loadStatus() {
       const results = await Promise.allSettled(
-        ACCOUNTS.map((acc, i) => sleep(i * STATUS_FETCH_STAGGER_MS).then(() => callApiFor(acc, 'status')))
+        ACCOUNTS.map((acc) => callApiFor(acc, 'status'))
       );
 
       lastResults = results.map((r, i) => ({
@@ -2703,6 +2857,8 @@
       list.innerHTML = '';
       lastResults.forEach((r) => list.appendChild(renderAccountCard(r.account, r)));
 
+      renderRedistributeChecklist();
+
       document.getElementById('lastUpdated').textContent =
         'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
@@ -2714,7 +2870,7 @@
       btn.disabled = true;
       btn.textContent = 'Running…';
       const outcomes = await Promise.allSettled(
-        ACCOUNTS.map((acc, i) => sleep(i * STATUS_FETCH_STAGGER_MS).then(() => callApiFor(acc, 'runNow')))
+        ACCOUNTS.map((acc) => callApiFor(acc, 'runNow'))
       );
       const failed = outcomes.filter((o) => o.status === 'rejected').length;
       showToast(failed > 0 ? `Triggered, ${failed} account(s) failed` : 'Run triggered on all accounts');
