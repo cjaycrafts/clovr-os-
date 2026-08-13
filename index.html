@@ -1477,10 +1477,63 @@
       setTimeout(() => t.classList.remove('show'), 2200);
     }
 
+    // ================================================
+    // Network resilience helpers
+    // ================================================
+    // Apps Script's /exec endpoint can intermittently return an HTML
+    // "interstitial" page instead of the JSON our doGet/doPost always
+    // produce — this happens inside Google's own infrastructure, before
+    // our script code even runs, and shows up more often the more
+    // concurrent requests hit /exec URLs at once (which is exactly what
+    // happens here: 13 accounts all queried in the same burst). It's not
+    // tied to any specific account — it rotates, because it's about which
+    // request happens to land in that window, not which script it hits.
+    //
+    // sleep() / fetchJsonWithRetry() / postJsonWithRetry() give every
+    // network call in this app a silent, short retry (up to 3 attempts
+    // total) whenever the response isn't valid JSON, before we ever
+    // surface it to the user as a failure.
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function fetchJsonWithRetry(url, attempt) {
+      attempt = attempt || 1;
+      const res = await fetch(url);
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch (parseErr) {
+        if (attempt < 3) {
+          await sleep(400 * attempt);
+          return fetchJsonWithRetry(url, attempt + 1);
+        }
+        throw new Error('Bad response from server (non-JSON) after ' + attempt + ' attempts');
+      }
+    }
+
+    async function postJsonWithRetry(url, body, attempt) {
+      attempt = attempt || 1;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(body)
+      });
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch (parseErr) {
+        if (attempt < 3) {
+          await sleep(400 * attempt);
+          return postJsonWithRetry(url, body, attempt + 1);
+        }
+        throw new Error('Bad response from server (non-JSON) after ' + attempt + ' attempts');
+      }
+    }
+
     async function callApiFor(account, action, extraParams) {
       const params = new URLSearchParams({ action, token: TOKEN, ...(extraParams || {}) });
-      const res = await fetch(`${account.url}?${params.toString()}`);
-      const data = await res.json();
+      const data = await fetchJsonWithRetry(`${account.url}?${params.toString()}`);
       if (data.error) throw new Error(data.error);
       return data;
     }
@@ -1530,8 +1583,7 @@
     async function syncAccountsFromRemote() {
       try {
         const params = new URLSearchParams({ action: 'getAccountsList', token: TOKEN });
-        const res = await fetch(`${ACCOUNTS[0].url}?${params.toString()}`);
-        const data = await res.json();
+        const data = await fetchJsonWithRetry(`${ACCOUNTS[0].url}?${params.toString()}`);
         if (data.error || !data.accounts || !Array.isArray(data.accounts) || !data.accounts.length) return;
 
         // Same placeholder-aware merge as the local-storage logic: only let
@@ -1731,14 +1783,16 @@
       }
     });
 
-    // Fetches every account's existing emails in parallel, for the
-    // fleet-wide duplicate check. Accounts that fail to respond are simply
-    // skipped for this check (not treated as duplicates).
+    // Fetches every account's existing emails in parallel (staggered), for
+    // the fleet-wide duplicate check. Accounts that fail to respond are
+    // simply skipped for this check (not treated as duplicates).
     async function getFleetEmailSet() {
+      const STAGGER_MS = 120;
       const results = await Promise.allSettled(
-        ACCOUNTS.map((acc) =>
-          fetch(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
-            .then((r) => r.json())
+        ACCOUNTS.map((acc, i) =>
+          sleep(i * STAGGER_MS).then(() =>
+            fetchJsonWithRetry(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
+          )
         )
       );
 
@@ -1792,11 +1846,7 @@
 
           const results = await Promise.allSettled(
             validAccounts.map((acc, i) =>
-              fetch(acc.url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ token: TOKEN, action: 'importLeads', leads: chunks[i] })
-              }).then((r) => r.json())
+              callApiForPost(acc, 'importLeads', { leads: chunks[i] })
             )
           );
 
@@ -1816,14 +1866,7 @@
           });
         } else {
           const account = ACCOUNTS[parseInt(target)];
-          const res = await fetch(account.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({ token: TOKEN, action: 'importLeads', leads: deduped })
-          });
-          const data = await res.json();
-          if (data.error) throw new Error(data.error);
-          combined = data;
+          combined = await callApiForPost(account, 'importLeads', { leads: deduped });
         }
 
         importSummary.innerHTML = `
@@ -1927,10 +1970,7 @@
     async function loadFollowupSettings() {
       document.getElementById('followupAccountLabel').textContent = currentAccount().label;
       try {
-        const params = new URLSearchParams({ action: 'followupSettings', token: TOKEN });
-        const res = await fetch(`${currentAccount().url}?${params.toString()}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        const data = await callApiFor(currentAccount(), 'followupSettings');
         document.getElementById('followup1Toggle').checked = data.followup1Enabled;
         document.getElementById('followup2Toggle').checked = data.followup2Enabled;
       } catch (e) {
@@ -1967,10 +2007,7 @@
       body.innerHTML = `<tr><td colspan="9" style="padding:16px;">Loading…</td></tr>`;
       try {
         const account = currentAccount();
-        const params = new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: LEADS_FETCH_SIZE });
-        const res = await fetch(`${account.url}?${params.toString()}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        const data = await callApiFor(account, 'leads', { page: 1, pageSize: LEADS_FETCH_SIZE });
         allLeads = data.leads;
         applyLeadsFilter();
       } catch (e) {
@@ -2057,12 +2094,7 @@
     }
 
     async function callApiForPost(account, action, extra) {
-      const res = await fetch(account.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ token: TOKEN, action, ...extra })
-      });
-      const data = await res.json();
+      const data = await postJsonWithRetry(account.url, { token: TOKEN, action, ...extra });
       if (data.error) throw new Error(data.error);
       return data;
     }
@@ -2087,10 +2119,7 @@
 
       try {
         const account = currentAccount();
-        const params = new URLSearchParams({ action: 'importBatches', token: TOKEN });
-        const res = await fetch(`${account.url}?${params.toString()}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        const data = await callApiFor(account, 'importBatches');
 
         if (!data.batches.length) {
           resultsEl.innerHTML = `<div class="log-state log-state-empty">No imports recorded yet on this account.</div>`;
@@ -2136,10 +2165,12 @@
       resultsEl.innerHTML = `<div class="log-state log-state-empty">Scanning all accounts…</div>`;
 
       try {
+        const STAGGER_MS = 120;
         const results = await Promise.allSettled(
-          ACCOUNTS.map((acc) =>
-            fetch(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
-              .then((r) => r.json())
+          ACCOUNTS.map((acc, i) =>
+            sleep(i * STAGGER_MS).then(() =>
+              fetchJsonWithRetry(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
+            )
           )
         );
 
@@ -2285,10 +2316,7 @@
       listEl.textContent = 'Loading…';
       try {
         const account = ACCOUNTS[activityAccountIndex];
-        const params = new URLSearchParams({ action: 'activityLog', token: TOKEN });
-        const res = await fetch(`${account.url}?${params.toString()}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        const data = await callApiFor(account, 'activityLog');
         renderActivityLog(data.log || []);
       } catch (e) {
         listEl.innerHTML = `<div class="log-state log-state-error">Could not load activity log: ${e.message}</div>`;
@@ -2594,9 +2622,15 @@
       return div;
     }
 
+    // How long to wait between kicking off each account's status request.
+    // Spreads a 13-way burst out over ~1.4s instead of firing everything
+    // in the same tick, which is the main thing that makes Apps Script's
+    // /exec endpoint occasionally hand back an HTML page instead of JSON.
+    const STATUS_FETCH_STAGGER_MS = 120;
+
     async function loadStatus() {
       const results = await Promise.allSettled(
-        ACCOUNTS.map((acc) => callApiFor(acc, 'status'))
+        ACCOUNTS.map((acc, i) => sleep(i * STATUS_FETCH_STAGGER_MS).then(() => callApiFor(acc, 'status')))
       );
 
       lastResults = results.map((r, i) => ({
@@ -2680,7 +2714,7 @@
       btn.disabled = true;
       btn.textContent = 'Running…';
       const outcomes = await Promise.allSettled(
-        ACCOUNTS.map((acc) => callApiFor(acc, 'runNow'))
+        ACCOUNTS.map((acc, i) => sleep(i * STATUS_FETCH_STAGGER_MS).then(() => callApiFor(acc, 'runNow')))
       );
       const failed = outcomes.filter((o) => o.status === 'rejected').length;
       showToast(failed > 0 ? `Triggered, ${failed} account(s) failed` : 'Run triggered on all accounts');
