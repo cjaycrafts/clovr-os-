@@ -2782,20 +2782,9 @@
       btn.textContent = 'Redistribute waiting leads';
     });
 
-    async function callApiForWithRetry(account, action, extraParams, retries = 2) {
-      for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-          return await callApiFor(account, action, extraParams);
-        } catch (e) {
-          if (attempt === retries) throw e;
-          await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
-        }
-      }
-    }
-
     async function loadStatus() {
       const results = await Promise.allSettled(
-        ACCOUNTS.map((acc) => callApiForWithRetry(acc, 'status'))
+        ACCOUNTS.map((acc) => callApiFor(acc, 'status'))
       );
 
       lastResults = results.map((r, i) => ({
