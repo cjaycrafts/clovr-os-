@@ -1293,8 +1293,11 @@
       <div class="section-label">Accounts <span id="accountCountLabel"></span></div>
       <div id="accountList"></div>
 
-      <div class="section-label">Redistribute leads</div>
-      <div class="import-card" id="redistributeCard" style="text-align:left;">
+     <div class="section-label" id="redistributeToggle" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none;">
+  <span>Redistribute leads</span>
+  <span id="redistributeChevron" style="font-family:var(--font-mono); font-size:13px;">▸</span>
+</div>
+<div class="import-card hidden" id="redistributeCard" style="text-align:left;">
         <div style="font-size:12px; color:var(--text-dim); margin-bottom:10px; line-height:1.6;">
           Pools every <strong style="color:var(--text);">waiting-to-send</strong> lead from the accounts checked below, then splits that pool evenly back across those same checked accounts. Uncheck an account to exclude it entirely — it won't give up leads and won't receive any.
         </div>
@@ -1910,6 +1913,14 @@
         renderAccountsEditor();
       }
     });
+
+    document.getElementById('redistributeToggle').addEventListener('click', () => {
+  const card = document.getElementById('redistributeCard');
+  const chevron = document.getElementById('redistributeChevron');
+  const opening = card.classList.contains('hidden');
+  card.classList.toggle('hidden');
+  chevron.textContent = opening ? '▾' : '▸';
+  });
 
     // ================================================
     // Leads spreadsheet view
@@ -2708,75 +2719,77 @@
         btn.textContent = 'Calculating even split…';
         const chunks = splitEvenly(pool, includedIdx.length); // chunks[i] -> leads assigned to includedIdx[i]
 
-        // 3. Only leads that land on a DIFFERENT account than they started
-        //    on actually need to move.
-        const toDeleteByAccount = {};
-        const toAddByAccount    = {};
-        includedIdx.forEach((idx) => { toDeleteByAccount[idx] = []; toAddByAccount[idx] = []; });
-
+       // 3. Build the list of individual moves (source → target) needed.
+        const moves = [];
         chunks.forEach((chunk, ci) => {
           const targetIdx = includedIdx[ci];
           chunk.forEach((lead) => {
             if (lead._sourceIdx !== targetIdx) {
-              toDeleteByAccount[lead._sourceIdx].push(lead.row);
-              toAddByAccount[targetIdx].push({
-                name: lead.name,
-                email: lead.email,
-                storeName: lead.storeName,
-                domain: lead.domain,
-                indexedDate: lead.indexedDate
-              });
+              moves.push({ sourceIdx: lead._sourceIdx, targetIdx, row: lead.row, lead });
             }
           });
         });
 
-        const movedCount = Object.values(toAddByAccount).reduce((sum, arr) => sum + arr.length, 0);
-
-        if (!movedCount) {
+        if (!moves.length) {
           summaryEl.innerHTML = `<div class="log-state log-state-empty">Checked accounts are already evenly balanced (${pool.length} waiting lead(s) total) — nothing to move.</div>`;
           btn.disabled = false;
           btn.textContent = 'Redistribute waiting leads';
           return;
         }
 
-        // 4. Apply: delete moved leads from their old account, add them to
-        //    their new one. Batched with a shared timestamp so the move
-        //    shows up as one entry in Import history on the receiving side.
-        btn.textContent = `Moving ${movedCount} lead(s)…`;
-        const batchTimestamp = new Date().toISOString();
+        // 4. ADD FIRST, using the existing importLeads endpoint (no new
+        //    backend action needed). Only once a target confirms it fully
+        //    accepted its batch do we delete those leads from their source
+        //    — this way a failed add can never lose a lead.
+        btn.textContent = `Adding ${moves.length} lead(s) to their new accounts…`;
 
-        const ops = [];
-        includedIdx.forEach((idx) => {
-          if (toDeleteByAccount[idx].length) {
-            ops.push(
-              callApiForPost(ACCOUNTS[idx], 'deleteLeads', { rows: toDeleteByAccount[idx], reason: 'redistribute' })
-                .then(() => ({ idx, type: 'delete', count: toDeleteByAccount[idx].length }))
-                .catch((e) => ({ idx, type: 'delete', error: e.message }))
-            );
-          }
-          if (toAddByAccount[idx].length) {
-            ops.push(
-              callApiForPost(ACCOUNTS[idx], 'receiveLeads', { leads: toAddByAccount[idx], batchTimestamp })
-                .then(() => ({ idx, type: 'add', count: toAddByAccount[idx].length }))
-                .catch((e) => ({ idx, type: 'add', error: e.message }))
-            );
-          }
+        const byTarget = {};
+        includedIdx.forEach((idx) => { byTarget[idx] = moves.filter((m) => m.targetIdx === idx); });
+
+        const addResults = await Promise.all(
+          includedIdx.filter((idx) => byTarget[idx].length).map((idx) =>
+            callApiForPost(ACCOUNTS[idx], 'importLeads', {
+              leads: byTarget[idx].map((m) => ({
+                name: m.lead.name, email: m.lead.email, storeName: m.lead.storeName,
+                domain: m.lead.domain, indexedDate: m.lead.indexedDate
+              }))
+            })
+              .then((d) => ({ idx, ok: d.accepted === byTarget[idx].length, accepted: d.accepted, total: byTarget[idx].length }))
+              .catch((e) => ({ idx, ok: false, error: e.message, total: byTarget[idx].length }))
+          )
+        );
+
+        const safeTargets = new Set(addResults.filter((r) => r.ok).map((r) => r.idx));
+        const unsafeResults = addResults.filter((r) => !r.ok);
+
+        // 5. Only delete the source copies of leads whose target confirmed
+        //    a full, clean add.
+        const safeMoves = moves.filter((m) => safeTargets.has(m.targetIdx));
+        const byDeleteSource = {};
+        safeMoves.forEach((m) => {
+          (byDeleteSource[m.sourceIdx] = byDeleteSource[m.sourceIdx] || []).push(m.row);
         });
 
-        const opResults = await Promise.all(ops);
-        const failed = opResults.filter((r) => r.error);
+        btn.textContent = `Cleaning up ${safeMoves.length} source lead(s)…`;
+        const deleteResults = await Promise.all(
+          Object.keys(byDeleteSource).map((idx) =>
+            callApiForPost(ACCOUNTS[idx], 'deleteLeads', { rows: byDeleteSource[idx], reason: 'redistribute' })
+              .then(() => ({ idx, ok: true }))
+              .catch((e) => ({ idx, ok: false, error: e.message }))
+          )
+        );
+
+        const deleteFailed = deleteResults.filter((r) => !r.ok);
 
         summaryEl.innerHTML = `
-          <span class="accepted">${movedCount} lead(s) redistributed</span> across ${includedIdx.length} checked account(s)
+          <span class="accepted">${safeMoves.length} lead(s) redistributed</span> across ${includedIdx.length} checked account(s)
           ${fetchFailures.length ? `<br><span class="rejected">Could not read from: ${fetchFailures.join(', ')}</span>` : ''}
-          ${failed.length ? `<br><span class="rejected">${failed.length} operation(s) failed — double check those accounts.</span>` : ''}
+          ${unsafeResults.length ? `<br><span class="rejected">${unsafeResults.reduce((s, r) => s + r.total, 0)} lead(s) NOT moved — target account didn't fully accept them, left untouched on source: ${unsafeResults.map((r) => ACCOUNTS[r.idx].label).join(', ')}</span>` : ''}
+          ${deleteFailed.length ? `<br><span class="rejected">Warning: added to new account but couldn't remove from old one on: ${deleteFailed.map((r) => ACCOUNTS[r.idx].label).join(', ')} — you may see temporary duplicates, safe to manually delete.</span>` : ''}
         `;
         showToast('Redistribution complete');
         loadStatus();
         if (leadsBooted) loadLeads();
-      } catch (e) {
-        summaryEl.innerHTML = `<div class="log-state log-state-error">Redistribution failed: ${e.message}</div>`;
-      }
 
       btn.disabled = false;
       btn.textContent = 'Redistribute waiting leads';
