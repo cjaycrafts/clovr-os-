@@ -2790,6 +2790,9 @@
         showToast('Redistribution complete');
         loadStatus();
         if (leadsBooted) loadLeads();
+      } catch (e) {
+        summaryEl.innerHTML = `<div class="log-state log-state-error">Redistribution failed: ${e.message}</div>`;
+      }
 
       btn.disabled = false;
       btn.textContent = 'Redistribute waiting leads';
