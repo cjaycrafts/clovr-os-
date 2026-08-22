@@ -1329,8 +1329,9 @@
         <button class="danger-btn" id="resetWeekBtn">Hard reset (clears leads, keeps lifetime stats)</button>
         <button class="mini-btn" id="deleteSelectedBtn" style="flex:1;">Delete selected</button>
       </div>
-      <div class="leads-toolbar">
+          <div class="leads-toolbar">
         <button class="mini-btn" id="scanDuplicatesBtn" style="flex:1;">Scan fleet for duplicate leads</button>
+        <button class="mini-btn" id="autoDedupeBtn" style="flex:1; color:var(--danger);">Auto-delete duplicates (keep best copy)</button>
       </div>
       <div id="duplicateScanResults"></div>
 
@@ -2157,7 +2158,100 @@
       }
     });
 
-    document.getElementById('scanDuplicatesBtn').addEventListener('click', async () => {
+        function rankLead(lead) {
+      if (lead.replied) return 4;
+      if (lead.bounced) return 3;
+      if (lead.dateEmailed) return 2;
+      return 1;
+    }
+
+    function leadSortDate(lead) {
+      return new Date(lead.dateEmailed || lead.indexedDate || 0).getTime();
+    }
+
+    document.getElementById('autoDedupeBtn').addEventListener('click', async () => {
+      const resultsEl = document.getElementById('duplicateScanResults');
+      if (!confirm('This scans every account, finds duplicate emails, and PERMANENTLY deletes all but the best copy of each (priority: replied > bounced > already sent > waiting). This cannot be undone. Continue?')) return;
+
+      resultsEl.innerHTML = `<div class="log-state log-state-empty">Scanning fleet…</div>`;
+
+      try {
+        const results = await Promise.allSettled(
+          ACCOUNTS.map((acc, idx) =>
+            fetch(`${acc.url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: 5000 })}`)
+              .then((r) => r.json())
+              .then((data) => ({ idx, data }))
+          )
+        );
+
+        const emailMap = {};
+        results.forEach((r) => {
+          if (r.status === 'fulfilled' && r.value.data.leads) {
+            const idx = r.value.idx;
+            r.value.data.leads.forEach((lead) => {
+              if (!lead.email) return;
+              const key = lead.email.toLowerCase().trim();
+              if (!emailMap[key]) emailMap[key] = [];
+              emailMap[key].push({ idx, lead });
+            });
+          }
+        });
+
+        const toDeleteByAccount = {};
+        let dupGroupCount = 0;
+        let totalToDelete = 0;
+
+        Object.values(emailMap).forEach((copies) => {
+          if (copies.length < 2) return;
+          dupGroupCount++;
+
+          copies.sort((a, b) => {
+            const rankDiff = rankLead(b.lead) - rankLead(a.lead);
+            if (rankDiff !== 0) return rankDiff;
+            return leadSortDate(a.lead) - leadSortDate(b.lead);
+          });
+
+          copies.slice(1).forEach(({ idx, lead }) => {
+            (toDeleteByAccount[idx] = toDeleteByAccount[idx] || []).push(lead.row);
+            totalToDelete++;
+          });
+        });
+
+        if (!totalToDelete) {
+          resultsEl.innerHTML = `<div class="log-state log-state-empty">No duplicates found — nothing to clean up.</div>`;
+          return;
+        }
+
+        resultsEl.innerHTML = `<div class="log-state log-state-empty">Deleting ${totalToDelete} duplicate lead(s) across ${dupGroupCount} email(s)…</div>`;
+
+        const deleteResults = await Promise.all(
+          Object.keys(toDeleteByAccount).map((idx) =>
+            callApiForPost(ACCOUNTS[idx], 'deleteLeads', { rows: toDeleteByAccount[idx], reason: 'auto_dedupe' })
+              .then(() => ({ idx, ok: true }))
+              .catch((e) => ({ idx, ok: false, error: e.message }))
+          )
+        );
+
+        const failed = deleteResults.filter((r) => !r.ok);
+
+        resultsEl.innerHTML = `
+          <div class="log-state" style="background:rgba(107,143,113,0.12); border:1px solid var(--clover); color:var(--clover); flex-direction:column; align-items:stretch;">
+            <strong>Cleanup complete.</strong>
+            <div style="margin-top:8px; font-size:12px; color:var(--text);">
+              ${dupGroupCount} duplicate email(s) found · ${totalToDelete} extra cop${totalToDelete === 1 ? 'y' : 'ies'} removed, best copy kept for each.
+            </div>
+            ${failed.length ? `<div style="margin-top:8px; color:var(--danger);">${failed.length} account(s) failed to delete their share — rerun the scan to check.</div>` : ''}
+          </div>
+        `;
+        showToast('Duplicate cleanup complete');
+        if (leadsBooted) loadLeads();
+        loadStatus();
+      } catch (e) {
+        resultsEl.innerHTML = `<div class="log-state log-state-error">Cleanup failed: ${e.message}</div>`;
+      }
+    });
+
+       document.getElementById('scanDuplicatesBtn').addEventListener('click', async () => {
       const resultsEl = document.getElementById('duplicateScanResults');
       resultsEl.innerHTML = `<div class="log-state log-state-empty">Scanning all accounts…</div>`;
 
@@ -2201,7 +2295,6 @@
         resultsEl.innerHTML = `<div class="log-state log-state-error">Scan failed: ${e.message}</div>`;
       }
     });
-
     document.getElementById('resetWeekBtn').addEventListener('click', async () => {
       if (!confirm('This deletes ALL leads on this account, keeping only the header row. Are you sure?')) return;
       if (!confirm('Really sure? This cannot be undone.')) return;
