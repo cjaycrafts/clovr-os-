@@ -1310,6 +1310,24 @@
         <div class="import-summary" id="redistributeSummary"></div>
       </div>
 
+            <div class="section-label" id="moveLeadsToggle" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none;">
+        <span>Move leads from one account</span>
+        <span id="moveLeadsChevron" style="font-family:var(--font-mono); font-size:13px;">▸</span>
+      </div>
+      <div class="import-card hidden" id="moveLeadsCard" style="text-align:left;">
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:10px; line-height:1.6;">
+          Moves every <strong style="color:var(--text);">waiting-to-send</strong> lead OUT of one chosen account — either split evenly across every other account, or sent entirely to one specific account.
+        </div>
+        <select id="moveSourceSelect" style="width:100%; padding:10px; margin-bottom:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;"></select>
+        <select id="moveModeSelect" style="width:100%; padding:10px; margin-bottom:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;">
+          <option value="split">Split across all other accounts</option>
+          <option value="single">Send to one specific account</option>
+        </select>
+        <select id="moveTargetSelect" class="hidden" style="width:100%; padding:10px; margin-bottom:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-mono); font-size:12px;"></select>
+        <button class="btn-primary" id="moveLeadsBtn">Move leads</button>
+        <div class="import-summary" id="moveLeadsSummary"></div>
+      </div>
+      
       <div class="section-label">Accounts compared</div>
       <div class="bar-chart-section">
         <div class="bar-chart-scroll">
@@ -2768,6 +2786,8 @@
       const summaryEl = document.getElementById('redistributeSummary');
       const btn = document.getElementById('redistributeBtn');
 
+          
+   
       if (includedIdx.length < 2) {
         summaryEl.innerHTML = `<div class="log-state log-state-empty">Check at least 2 accounts to redistribute between.</div>`;
         return;
@@ -2884,6 +2904,122 @@
       btn.textContent = 'Redistribute waiting leads';
     });
 
+
+     // Move leads from ONE account — either split across every other
+    // account, or send entirely to one chosen target. Uses the same safe
+    // per-lead add-then-delete pattern as Redistribute above.
+    // ================================================
+    document.getElementById('moveLeadsToggle').addEventListener('click', () => {
+      const card = document.getElementById('moveLeadsCard');
+      const chevron = document.getElementById('moveLeadsChevron');
+      const opening = card.classList.contains('hidden');
+      card.classList.toggle('hidden');
+      chevron.textContent = opening ? '▾' : '▸';
+    });
+
+    function populateMoveSelects() {
+      const sourceSel = document.getElementById('moveSourceSelect');
+      const targetSel = document.getElementById('moveTargetSelect');
+      if (!sourceSel || !targetSel) return;
+      const prevSource = sourceSel.value;
+      const prevTarget = targetSel.value;
+      sourceSel.innerHTML = ACCOUNTS.map((a, i) => `<option value="${i}">From ${a.label}</option>`).join('');
+      targetSel.innerHTML = ACCOUNTS.map((a, i) => `<option value="${i}">To ${a.label}</option>`).join('');
+      if (prevSource && ACCOUNTS[prevSource]) sourceSel.value = prevSource;
+      if (prevTarget && ACCOUNTS[prevTarget]) targetSel.value = prevTarget;
+    }
+    populateMoveSelects();
+
+    document.getElementById('moveModeSelect').addEventListener('change', (e) => {
+      document.getElementById('moveTargetSelect').classList.toggle('hidden', e.target.value !== 'single');
+    });
+
+    document.getElementById('moveLeadsBtn').addEventListener('click', async () => {
+      const sourceIdx = parseInt(document.getElementById('moveSourceSelect').value);
+      const mode = document.getElementById('moveModeSelect').value;
+      const targetIdx = parseInt(document.getElementById('moveTargetSelect').value);
+      const summaryEl = document.getElementById('moveLeadsSummary');
+      const btn = document.getElementById('moveLeadsBtn');
+
+      if (mode === 'single' && targetIdx === sourceIdx) {
+        summaryEl.innerHTML = `<div class="log-state log-state-empty">Source and target can't be the same account.</div>`;
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Fetching waiting leads…';
+      summaryEl.innerHTML = `<div class="log-state log-state-empty">Pulling waiting leads from ${ACCOUNTS[sourceIdx].label}…</div>`;
+
+      try {
+        const res = await fetch(`${ACCOUNTS[sourceIdx].url}?${new URLSearchParams({ action: 'leads', token: TOKEN, page: 1, pageSize: LEADS_FETCH_SIZE })}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        const waiting = (data.leads || []).filter((l) => !l.dateEmailed && !l.replied && !l.bounced);
+
+        if (!waiting.length) {
+          summaryEl.innerHTML = `<div class="log-state log-state-empty">No waiting leads on ${ACCOUNTS[sourceIdx].label} — nothing to move.</div>`;
+          btn.disabled = false;
+          btn.textContent = 'Move leads';
+          return;
+        }
+
+        // Build the moves: single target, or split across every OTHER account.
+        let moves;
+        if (mode === 'single') {
+          moves = waiting.map((lead) => ({ targetIdx, row: lead.row, lead }));
+        } else {
+          const otherIdx = ACCOUNTS.map((_, i) => i).filter((i) => i !== sourceIdx);
+          if (!otherIdx.length) {
+            summaryEl.innerHTML = `<div class="log-state log-state-empty">No other accounts configured to split across.</div>`;
+            btn.disabled = false;
+            btn.textContent = 'Move leads';
+            return;
+          }
+          const chunks = splitEvenly(waiting, otherIdx.length);
+          moves = [];
+          chunks.forEach((chunk, ci) => {
+            chunk.forEach((lead) => moves.push({ targetIdx: otherIdx[ci], row: lead.row, lead }));
+          });
+        }
+
+        btn.textContent = `Adding ${moves.length} lead(s) to their new account(s)…`;
+
+        const addOutcomes = await Promise.all(
+          moves.map((m) =>
+            callApiForPost(ACCOUNTS[m.targetIdx], 'importLeads', {
+              leads: [{ name: m.lead.name, email: m.lead.email, storeName: m.lead.storeName, domain: m.lead.domain, indexedDate: m.lead.indexedDate }]
+            })
+              .then((d) => ({ move: m, ok: d.accepted === 1 }))
+              .catch(() => ({ move: m, ok: false }))
+          )
+        );
+
+        const safeRows = addOutcomes.filter((r) => r.ok).map((r) => r.move.row);
+        const unsafeCount = addOutcomes.length - safeRows.length;
+
+        if (safeRows.length) {
+          btn.textContent = `Cleaning up ${safeRows.length} source lead(s)…`;
+          await callApiForPost(ACCOUNTS[sourceIdx], 'deleteLeads', { rows: safeRows, reason: 'redistribute' });
+        }
+
+        summaryEl.innerHTML = `
+          <span class="accepted">${safeRows.length} lead(s) moved</span> from ${ACCOUNTS[sourceIdx].label}
+          ${mode === 'single' ? `to ${ACCOUNTS[targetIdx].label}` : `split across ${ACCOUNTS.length - 1} other account(s)`}
+          ${unsafeCount ? `<br><span class="rejected">${unsafeCount} lead(s) NOT moved — target rejected them (duplicate/invalid), left untouched on source.</span>` : ''}
+        `;
+        showToast('Move complete');
+        loadStatus();
+        if (leadsBooted) loadLeads();
+      } catch (e) {
+        summaryEl.innerHTML = `<div class="log-state log-state-error">Move failed: ${e.message}</div>`;
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Move leads';
+    });
+
+    
     async function loadStatus() {
       const results = await Promise.allSettled(
         ACCOUNTS.map((acc) => callApiFor(acc, 'status'))
@@ -2914,6 +3050,7 @@
             ACCOUNTS.map((a, i) => `<option value="${i}">Import to ${a.label}</option>`).join('') +
             `<option value="distribute">Distribute evenly across all accounts</option>`;
         }
+        populateMoveSelects();
         document.querySelectorAll('#accountTabs .account-tab-btn').forEach((btn) => {
           const idx = parseInt(btn.dataset.idx);
           if (ACCOUNTS[idx]) btn.textContent = ACCOUNTS[idx].label;
